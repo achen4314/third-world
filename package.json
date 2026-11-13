@@ -1,0 +1,17 @@
+{
+  "name": "third-world",
+  "version": "1.0.0",
+  "private": true,
+  "description": "第三世界 · 跨端综合运动训练软件（原型 + 数据库 schema + 可复现校验）",
+  "scripts": {
+    "check:env": "node tools/check-env.mjs --probe",
+    "check:db": "node tools/db-check.cjs",
+    "db:apply": "node tools/apply-remote.mjs",
+    "db:verify": "node tools/apply-remote.mjs --verify-only",
+    "db:apply:dry": "node tools/apply-remote.mjs --dry-run"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.2.0",
+    "pg": "^8.23.1"
+  }
+}

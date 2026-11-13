@@ -71,24 +71,37 @@ index.html?platform=iphone&route=analyze/load&theme=dark&role=observer&window=7&
 | `supabase/reset.sql` | 清库脚本（破坏性，带 `set app.allow_drop` 硬保护，默认拒绝执行） |
 | `.env.example` | 环境变量模板（占位值，键名对应 docs/06 C1–C11） |
 | `tools/check-env.mjs` | 环境校验 + 连通性自检（`--probe` 可判断迁移是否已推送） |
+| **`tools/apply-remote.mjs`** | **远程建库**：读 `.env.local` 连接串 → 预检空库 → 执行 apply-all → 远程自检；`--verify-only` 只自检；`--dry-run` 只校验 |
+| `package.json` / `package-lock.json` | `npm run db:apply` / `db:verify` / `check:db` / `check:env` |
 
 ## 仓库与 Supabase 接入
 
 - GitHub：<https://github.com/achen4314/third-world>（公开）
 - Supabase **只认 `supabase/migrations/`**，不会因为仓库连上 GitHub 就获得表结构。
+- **当前状态**：库已建好（2026-11-14）—— 17 张业务表 + 37 条 RLS 策略 + 30 条指标口径，自检 11/11 ✓，RLS 已在真实库验证。
+
+三种建库方式，任选：
 
 ```bash
-brew install supabase/tap/supabase
-supabase login
-supabase link --project-ref <你的 project-ref>
-supabase db push          # 依次执行 migrations/*.sql
+# A. 一条命令（需 .env.local 里填 DATABASE_URL，走 Session pooler 5432）
+npm install
+npm run db:apply          # 建库 + 自检
+npm run db:verify         # 只自检，可反复跑
+
+# B. SQL Editor 手工粘贴：supabase/apply-all.sql 整段执行
+
+# C. Supabase CLI
+brew install supabase/tap/supabase && supabase login
+supabase link --project-ref bffuuxdnztowlwbxjlzp && supabase db push
 ```
 
-推完必须跑一遍越权用例（详见 `supabase/README.md` §4）；本地可先离线验证：
+离线可复现验证（不连云）：
 
 ```bash
 npm i -D @electric-sql/pglite && node tools/db-check.cjs
 ```
+
+> ⚠️ 直连域名 `db.<ref>.supabase.co` **只有 IPv6**；本机 DNS 走代理 fake-ip 时无法解析，请用 `aws-1-<region>.pooler.supabase.com:5432`（会话池化，可执行 DDL）。**不要**用 6543 事务池化跑建表。
 
 ## 在线预览（初始版本已上线）
 

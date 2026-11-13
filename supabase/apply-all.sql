@@ -667,15 +667,26 @@ on conflict (metric_id) do nothing;
 -- 自检：执行完会在结果区显示这张表，状态列全 ✓ 即通过
 -- ============================================================================
 with checks as (
-  select '业务表数量（含 1 张分区默认子表）'::text as item,
+  -- 分区子表（relispartition）排除在外：其 RLS 由父表策略覆盖，
+  -- 且各版本对 relrowsecurity 标记的处理不同（PG17 置 true、PG18 置 false），
+  -- 用它做断言会得出与版本相关的假失败。
+  select '业务表（不含分区子表）'::text as item,
          (select count(*) from pg_class c join pg_namespace n on n.oid = c.relnamespace
-           where n.nspname = 'public' and c.relkind in ('r','p'))::text as actual,
-         '18'::text as expect
+           where n.nspname = 'public' and c.relkind in ('r','p')
+             and not c.relispartition)::text as actual,
+         '17'::text as expect
   union all
-  select '已启用 RLS 的表（分区子表继承父表策略，故为 17）',
+  select '已启用 RLS 的业务表',
          (select count(*) from pg_class c join pg_namespace n on n.oid = c.relnamespace
-           where n.nspname = 'public' and c.relkind in ('r','p') and c.relrowsecurity)::text,
+           where n.nspname = 'public' and c.relkind in ('r','p')
+             and not c.relispartition and c.relrowsecurity)::text,
          '17'
+  union all
+  select '未启用 RLS 的业务表（应为 0）',
+         (select count(*) from pg_class c join pg_namespace n on n.oid = c.relnamespace
+           where n.nspname = 'public' and c.relkind in ('r','p')
+             and not c.relispartition and not c.relrowsecurity)::text,
+         '0'
   union all
   select 'RLS 策略数量',
          (select count(*) from pg_policies where schemaname = 'public')::text,
