@@ -41,3 +41,18 @@ enable_confirmations = false
 [storage]
 enabled = true
 file_size_limit = "50MiB"
+
+# ── Edge Functions ───────────────────────────────────────────────────────────
+# verify_jwt = true  ：Supabase 网关先校验 JWT，函数内再取用户身份走 RLS
+# verify_jwt = false ：厂商浏览器跳回来，压根没有 JWT，安全性靠 state 的 HMAC 签名
+[functions.export-athlete-data]
+verify_jwt = true
+
+[functions.delete-athlete-data]
+verify_jwt = true
+
+[functions.device-oauth-start]
+verify_jwt = true
+
+[functions.oauth-callback]
+verify_jwt = false

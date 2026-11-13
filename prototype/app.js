@@ -1056,8 +1056,9 @@
 
     page("admin/roles", "角色与权限", "谁能看 / 改 / 批 / 导？", "ADMIN / 权限", [
       S_matrix("RBAC 权限矩阵", "● 完全 · ◐ 受限 · — 无 · 服务端强制", 3),
-      S_cards("切换角色（演示）", "切换后可见模块按矩阵重算", A.ROLES.map(r => ({
-        icon: "shield", title: r.label, sub: r.id, value: state.role === r.id ? "当前" : "切换", sheet: "roles", sheetId: r.id,
+      S_cards("切换角色（演示）", "切换后可见模块按矩阵重算；括号内是落到库里的 RBAC 角色", A.ROLES.map(r => ({
+        icon: "shield", title: r.label, sub: r.id + " → " + (A.ROLE_MAP[r.id] || "未映射"),
+        value: state.role === r.id ? "当前" : "切换", sheet: "roles", sheetId: r.id,
         badge: state.role === r.id ? "当前" : undefined, badgeTone: "info"
       })), 2),
       S_note("实现约束", "权限在<b>服务端 RBAC 中间件</b>强制，前端仅做呈现控制；无权限入口显示<b>锁定态 + 原因</b>，不静默隐藏，避免同一入口在不同端行为不一致。", "warn", 1)

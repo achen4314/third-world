@@ -77,6 +77,42 @@ RLS 实测（真实库，非模拟）：
 | `auth.uid()` 无 token | `null`，不报错 ✓ |
 | 有 RLS 但无策略的表 | 仅 `device_credentials`（设计如此）✓ |
 
+### 1.7 0003 已执行：存储桶 + 存储策略 + 实时发布（2026-11-14 02:10）
+
+```bash
+node tools/apply-sql.mjs supabase/migrations/20261114000003_storage_realtime.sql
+```
+
+| 项 | 结果 |
+|---|---|
+| 执行方式 | 同上（Session pooler 5432），单事务，失败即回滚 |
+| 耗时 | 644 ms |
+| 自检 | **11/11 ✓** |
+| 幂等性 | 连续执行两次均成功、结果一致（策略先 `drop if exists` 再建；发布表用 `pg_publication_tables` 判重） |
+
+落地内容：
+
+| 对象 | 明细 |
+|---|---|
+| 存储桶 4 个（全私有） | `activity-files` 50 MiB / `session-videos` 50 MiB / `exports` 50 MiB / `avatars` 5 MiB |
+| 存储策略 16 条 | 4 桶 × 读/增/改/删，全部 `to authenticated`，无 anon 分支 |
+| 路径安全函数 | `public.arc_uuid_or_null(text)`：非法 uuid 返回 null → 策略判 false，不抛 22P02 |
+| 实时发布 8 张表 | activities / daily_metrics / test_sessions / jump_tests / vbt_sets / devices / athletes / memberships |
+| REPLICA IDENTITY | 7 张表 `full`（删除需还原上下文）；`daily_metrics` 保持 `default` 防 WAL 膨胀 |
+| 显式排除 | `raw_samples`（100 Hz 分区表）已在脚本里主动 `drop table` 出版本发布 |
+
+存储策略**行为实测**（夹具写入真实 `storage.objects` 后按角色读，全程事务内，结束回滚，库内零残留）：
+
+| 场景 | 期望 | 实际 |
+|---|---|---|
+| 同组织教练读本队运动员的 `activity-files/{org}/{athlete}/…` | 1 行 | **1** ✓ |
+| 同组织教练读别的 athlete 目录 | 0 行 | **0** ✓ |
+| 外组织用户（无 membership）读同两个对象 | 0 行 | **0** ✓ |
+| `anon` 读 `activity-files` | 0 行 | **0** ✓ |
+| 回滚后 `storage.objects` / `orgs` 行数 | 0 / 0 | **0 / 0** ✓ |
+
+> 说明：`storage.objects` 属主是 `supabase_storage_admin`，但 `postgres` 账号在该表上有完整 DML 权限且可 `CREATE POLICY`（已实测），因此 0003 不需要用 Dashboard 点选建策略。
+
 ## 2. 三种连法，按你的目标选
 
 ### A. CLI 直推（最常用，免费版可用）
@@ -150,10 +186,10 @@ can_write_athlete(athlete_id) = 本人 ∪ coach / team_admin / org_admin / clin
 | 套餐（免费 / Pro）                       | **✅ 已确认** 免费版                    | 无分支功能、无备份、无 PITR、闲置 7 天暂停                                                     |
 | 前端 key（`sb_publishable_…`）         | 待补完整值（截图中被面板截断）                  | 前端 SDK 无法初始化；不影响建库                                                            |
 | `service_role` / `sb_secret_` key  | 待补，只写 `.env.local`               | 服务端管理操作不可用；不影响建库                                                              |
-| 连接串（`DATABASE_URL` / `DIRECT_URL`） | 待提供，走 `.env.local`               | 无法从本机直连、无法 `db push`；走 SQL Editor 可绕过                                         |
-| Storage 策略                         | **未写**                           | 视频 / FIT 文件桶需按 `athlete_id` 前缀单独建策略                                           |
-| Realtime publication               | **未开**                           | 若走 Supabase Realtime 推送，需 `alter publication supabase_realtime add table ...` |
-| Edge Functions                     | **未写**                           | 导出、删除、OAuth 回调等异步任务尚未落地                                                       |
+| 连接串（`DATABASE_URL` / `DIRECT_URL`） | **✅ 已确认**（Session pooler 5432）      | 已从本机直连并执行 0001/0002/0003                                              |
+| Storage 策略                         | **✅ 已写并执行**（0003，16 条）            | 桶已隔离，行为已实测                                              |
+| Realtime publication               | **✅ 已开**（8 张表）                     | 实时推流可接 Supabase Realtime                                     |
+| Edge Functions                     | **✅ 代码已写 + 类型检查 + 单测通过**（4 个）    | **未部署**：需要 access token 或 Dashboard 粘贴，见 §7                        |
 
 ## 6. 验证状态（已在真 Postgres 上实跑）
 
@@ -189,8 +225,83 @@ node tools/db-check.cjs
 | ------------------------- | -------------------------------------------------------------------------------- |
 | Supabase 托管环境差异           | PGlite 是原生 PG 18，Supabase 为 PG 15；`auth` schema、`storage`、RLS 语义一致，但扩展与角色细节需实机确认 |
 | `pgcrypto` 扩展             | 测试时被剥离（`gen_random_uuid()` 在 PG13+ 已内置）；托管环境有 pgcrypto，不冲突                       |
-| Storage 策略                | 未写。`videos` / `imports` / `exports` 三个桶需按 `athlete_id` 前缀单独建策略                   |
-| Realtime / Edge Functions | 未配置。SSE 推流与导出、删除、OAuth 回调等异步任务尚未落地                                               |
+| Storage 策略                | **已实测**（0003）。但「真上传一个大文件」「签名 URL 过期」未跑，需前端接入后用真实文件验                   |
+| Realtime 端到端             | 发布与 REPLICA IDENTITY 已就位；**订阅端推送未实测**（需前端连上 `supabase.channel()` 观察）                       |
+| Edge Functions 运行         | 类型检查与 `_shared` 单测通过，**函数本体未在 Edge Runtime 里跑过**（未部署）；首次部署后必须按 §7 的 3 条冒烟用例验一遍 |
+
+---
+
+## 7. Edge Functions（代码已写，待部署）
+
+### 7.1 四个函数
+
+| 函数 | 方法 | 作用 | `verify_jwt` |
+|---|---|---|---|
+| `export-athlete-data` | GET / POST | 个人信息导出（PIPL 45 条）：走调用者 RLS 拉全量 → 落 `exports` 桶 → 返回 10 分钟签名链接 + sha256 | true |
+| `delete-athlete-data` | POST | 删除权（PIPL 47 条）：先 `dry_run` 报数，再 `confirm:"DELETE"` 真删（含对象存储） | true |
+| `device-oauth-start` | POST | 生成厂商授权 URL（state 用 HMAC 自签，10 分钟过期，绑定 device_id + 调用者） | true |
+| `oauth-callback` | GET | 厂商回调：换令牌 → AES-256-GCM 加密 → 写 `device_credentials` → 302 回 deep link | **false**（浏览器跳转无 JWT，靠 state 签名） |
+
+共享模块：`_shared/cors.ts`（CORS + 统一 JSON）、`_shared/client.ts`（userClient / adminClient / requireUser）、`_shared/crypto.ts`（AES-GCM + state 签名 + sha256）。
+
+### 7.2 本机已验证
+
+```bash
+cd supabase/functions
+npx deno check */index.ts          # 4 个函数类型检查通过
+npx deno test --allow-env _shared/crypto_test.ts   # 8/8 通过
+```
+
+单测覆盖：密文往返、IV 随机（同明文两次密文不同）、密钥长度错误必须报错、篡改密文解密失败、state 篡改失败、state 过期失败、密钥过短拒绝、sha256 稳定。
+
+### 7.3 部署（二选一）
+
+**A. CLI（推荐）**
+
+```bash
+export SUPABASE_ACCESS_TOKEN=<你的 personal access token>   # Dashboard → Account → Access Tokens
+npx supabase functions deploy export-athlete-data --project-ref bffuuxdnztowlwbxjlzp
+npx supabase functions deploy delete-athlete-data --project-ref bffuuxdnztowlwbxjlzp
+npx supabase functions deploy device-oauth-start  --project-ref bffuuxdnztowlwbxjlzp
+npx supabase functions deploy oauth-callback      --project-ref bffuuxdnztowlwbxjlzp --no-verify-jwt
+
+# 密钥（只写云端，不落 git）
+npx supabase secrets set ARC_CREDENTIAL_KEY=$(openssl rand -base64 32) \
+  ARC_STATE_SECRET=$(openssl rand -hex 32) \
+  ARC_OAUTH_REDIRECT_URL=https://bffuuxdnztowlwbxjlzp.supabase.co/functions/v1/oauth-callback \
+  ARC_APP_DEEPLINK=thirdworld://oauth/done --project-ref bffuuxdnztowlwbxjlzp
+```
+
+**B. Dashboard 手工建**
+
+Edge Functions → New function → 名称照 §7.1 → 把 `index.ts` 内容粘进去 → Deploy。`_shared/*` 三个文件也要一起建（同目录层级），否则 import 失败。`oauth-callback` 要在函数设置里关掉 JWT 校验。
+
+> `SUPABASE_SERVICE_ROLE_KEY` 由 Edge Runtime **自动注入**，不需要手工 set；这也意味着本仓库永远不需要把 service_role 写进 `.env.local` 才能部署函数。
+
+### 7.4 部署后必跑的三条冒烟
+
+```bash
+BASE=https://bffuuxdnztowlwbxjlzp.supabase.co/functions/v1
+JWT=<某个真实登录用户的 access_token>
+ATH=<该用户有权读的 athlete_id>
+
+# 1) 未带 JWT 必须 401
+curl -s -o /dev/null -w '%{http_code}\n' "$BASE/export-athlete-data?athlete_id=$ATH"     # 期望 401
+
+# 2) 带 JWT 且有权：200 + download_url + sha256
+curl -s -H "Authorization: Bearer $JWT" "$BASE/export-athlete-data?athlete_id=$ATH" | head -c 400
+
+# 3) 无权 athlete：404（不是 403，避免泄露存在性）
+curl -s -o /dev/null -w '%{http_code}\n' -H "Authorization: Bearer $JWT" \
+  "$BASE/export-athlete-data?athlete_id=00000000-0000-0000-0000-000000000000"           # 期望 404
+```
+
+删除函数务必要用 `dry_run` 先看数：
+
+```bash
+curl -s -X POST -H "Authorization: Bearer $JWT" -H 'content-type: application/json' \
+  -d "{\"athlete_id\":\"$ATH\"}" "$BASE/delete-athlete-data"      # 不带 confirm → 只报数
+```
 | 首次 `db push` 后            | 仍须在托管库上重跑第 4 节的 4 条越权用例；报错原文给我，我按报错改                                             |
 
 ---

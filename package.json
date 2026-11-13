@@ -8,10 +8,16 @@
     "check:db": "node tools/db-check.cjs",
     "db:apply": "node tools/apply-remote.mjs",
     "db:verify": "node tools/apply-remote.mjs --verify-only",
-    "db:apply:dry": "node tools/apply-remote.mjs --dry-run"
+    "db:apply:dry": "node tools/apply-remote.mjs --dry-run",
+    "db:0003": "node tools/apply-sql.mjs supabase/migrations/20261114000003_storage_realtime.sql",
+    "db:audit": "node tools/audit-db.mjs",
+    "fn:check": "cd supabase/functions && deno check export-athlete-data/index.ts delete-athlete-data/index.ts device-oauth-start/index.ts oauth-callback/index.ts",
+    "fn:test": "cd supabase/functions && deno test --allow-env _shared/crypto_test.ts"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.2.0",
-    "pg": "^8.23.1"
+    "deno": "^2.9.6",
+    "pg": "^8.23.1",
+    "typescript": "^7.0.2"
   }
 }

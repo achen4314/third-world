@@ -245,6 +245,26 @@
     { id: "observer", label: "只读观察者" }
   ];
 
+  // 展示用角色（上面 7 个）↔ 库内 RBAC 角色（app_role 枚举）的唯一映射。
+  // 两边不是同一套命名：前端 head_coach / medical / admin 是界面用词，库内是
+  // team_admin / clinician / org_admin。缺了这张表，「前端能点的按钮」和「服务端
+  // 放不放行」就会错位。权限永远以库内角色为准，PERMISSIONS 只决定展示。
+  //
+  // 语义边界（与 0002 策略逐条对应）：
+  //   head_coach → team_admin：可读写本队、可看组织成员与授权（memberships_select_managed），
+  //                            但改角色要 org_admin（memberships_write）→ 即矩阵里的「受限」
+  //   admin      → org_admin ：组织全权
+  //   medical    → clinician ：可写运动员数据，不可改成员与角色
+  const ROLE_MAP = {
+    athlete: "athlete",
+    coach: "coach",
+    head_coach: "team_admin",
+    medical: "clinician",
+    analyst: "analyst",
+    admin: "org_admin",
+    observer: "observer"
+  };
+
   // ● 完全 / ◐ 受限 / — 无（与 docs/01 §9.2 同源）
   const PERMISSIONS = {
     columns: ["athlete", "coach", "head_coach", "medical", "analyst", "admin", "observer"],
@@ -284,7 +304,7 @@
   window.ARC = {
     DATES, DATES_FULL, TL_BASE, RMSSD_BASE, SLEEP, VBT_SETS, JUMPS, DEVICES,
     SOURCES, SESSIONS, PLAN_BLOCKS, ATHLETES, AUDIT, RULES, METRICS, NAV,
-    ADMIN_NAV, ROLES, PERMISSIONS, BOUNDARIES, TEST_PROTOCOLS,
+    ADMIN_NAV, ROLES, ROLE_MAP, PERMISSIONS, BOUNDARIES, TEST_PROTOCOLS,
     G: 9.81
   };
 })();
