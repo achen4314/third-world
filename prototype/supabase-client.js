@@ -378,7 +378,7 @@
       var dm = await step("daily_metrics（每日指标）", function () {
         return rest("daily_metrics", {
           select: "athlete_id,metric_date,metric_id,value,quality,source,unit",
-          metric_id: 'in.("tl.srpe","ctl","atl","tsb","acwr.ewma","acwr.rolling","tm","ts","hrv.rmssd","hrv.lnrmssd","sleep.tst","sleep.efficiency")',
+          metric_id: 'in.("tl.srpe","ctl","atl","tsb","acwr.ewma","acwr.rolling","tm","ts","load.week","hrv.rmssd","hrv.lnrmssd","hrv.baseline","hrv.swc","hrv.z","sleep.tst","sleep.efficiency","sleep.debt","readiness")',
           order: "metric_date.desc", limit: "8000"
         });
       });
@@ -405,9 +405,25 @@
       S.orgId = (S.memberships[0] && S.memberships[0].org_id) || null;
       S.orgName = (org && org[0] && org[0].name) || "";
 
+      // 服务端聚合：前端不再自己拼就绪度/团队统计，只渲染 RPC 的结论
+      var primary = (ath || []).filter(function (x) { return x.user_id === uid; })[0] ||
+                    (ath || [])[0] || null;
+      var summary = null, team = null;
+      if (primary) {
+        summary = await step("RPC · 当日总览 arc_daily_summary", function () {
+          return rpc("arc_daily_summary", { p_athlete: primary.id, p_date: null });
+        });
+      }
+      if (S.orgId) {
+        team = await step("RPC · 团队总览 arc_team_overview", function () {
+          return rpc("arc_team_overview", { p_org: S.orgId, p_team: null });
+        });
+      }
+
       var payload = mapAll({
         uid: uid, athletes: ath || [], activities: act || [], metrics: dm || [],
-        tests: ts || [], devices: dev || [], audit: aud || [], registry: reg || []
+        tests: ts || [], devices: dev || [], audit: aud || [], registry: reg || [],
+        summary: summary, team: team
       });
       apply(payload);
 
@@ -458,11 +474,29 @@
     S.primaryAthlete = mine;
     S.athletes = d.athletes;
 
+    // 服务端聚合结果：整块透传，前端只读不算
+    arrays.SUMMARY = d.summary || null;
+    arrays.TEAM = d.team || null;
+
     // TL / HRV / 睡眠：最近 28 天
     arrays.DATES = days.map(mdOf);
     arrays.DATES_FULL = days.slice();
     arrays.TL_BASE = mine ? days.map(function (dt) { return val(mine.id, dt, "tl.srpe"); }) : days.map(function () { return null; });
     arrays.RMSSD_BASE = mine ? days.map(function (dt) { return val(mine.id, dt, "hrv.rmssd"); }) : days.map(function () { return null; });
+
+    // 逐日负荷序列：**直接取服务端算好的值**，前端不再自己递推一遍
+    arrays.SRV = mine ? days.map(function (dt) {
+      return {
+        tl: val(mine.id, dt, "tl.srpe"),
+        ctl: val(mine.id, dt, "ctl"),
+        atl: val(mine.id, dt, "atl"),
+        tsb: val(mine.id, dt, "tsb"),
+        acwr: val(mine.id, dt, "acwr.ewma"),
+        rolling: val(mine.id, dt, "acwr.rolling"),
+        tm: val(mine.id, dt, "tm"),
+        ts: val(mine.id, dt, "ts")
+      };
+    }) : null;
 
     var last7 = days.slice(-7);
     arrays.SLEEP = last7.map(function (dt) {

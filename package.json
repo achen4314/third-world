@@ -19,8 +19,14 @@
     "test:api": "node tools/smoke-api.mjs",
     "db:0005": "node tools/apply-sql.mjs supabase/migrations/20261114000005_auth_bridge.sql",
     "db:0006": "node tools/apply-sql.mjs supabase/migrations/20261114000006_signup_and_metrics.sql",
+    "db:0007": "node tools/apply-sql.mjs supabase/migrations/20261114000007_plans_library_rules.sql",
+    "db:0008": "node tools/apply-sql.mjs supabase/migrations/20261114000008_calculations.sql",
+    "db:0009": "node tools/apply-sql.mjs supabase/migrations/20261114000009_metrics_cleanup.sql",
+    "db:0010": "node tools/apply-sql.mjs supabase/migrations/20261114000010_timezone_backfill.sql",
+    "db:0011": "node tools/apply-sql.mjs supabase/migrations/20261114000011_state_vs_daily.sql",
     "accounts": "node tools/accounts.mjs list",
-    "seed:demo": "node tools/seed-demo.mjs"
+    "seed:demo": "node tools/seed-demo.mjs",
+    "q": "node tools/q.mjs"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.2.0",

@@ -22,9 +22,32 @@ npm run serve            # http://127.0.0.1:8799
 
 ```bash
 npm run db:audit      # 数据库与权限体系 28 项
-npm run test:flows    # 业务流程 38 项（事务内，跑完回滚）
+npm run test:flows    # 业务流程 85 项（事务内，跑完回滚，残留必须为 0）
 npm run test:api      # API 端到端（需要 publishable key）
 npm run mock:api      # 本地假后端，用于在没有 key 时验证前端链路
+npm run seed:demo     # 给演示账号补样例数据（训练/HRV/课库/计划/规则）
+```
+
+### 计算在哪里
+
+所有指标都在 Postgres 里算，前端只渲染结果（`arc_daily_summary()` 返回的 jsonb）：
+
+| 族 | 函数 | 口径 |
+|---|---|---|
+| 负荷 | `arc_recompute_metrics()` | TL / CTL / ATL / TSB / ACWR(EWMA+rolling) / TM / TS / 7 日负荷 |
+| 跳跃 | `arc_before_jump` / `arc_after_jump` | h = 9.81·t²/8、RSI、PPO（Sayers） |
+| 速度 | `arc_after_vbt` / `arc_vbt_profile()` | VL%、机械功率、负荷-速度剖面外推 1RM |
+| 恢复 | `arc_recompute_recovery()` | lnRMSSD、7 日基准、SWC、偏离 z、睡眠债 |
+| 就绪 | `arc_readiness_score()` | 负荷 0.35 / HRV 0.35 / 睡眠 0.30，缺分量按比例重分配 |
+| 计划 | `arc_cycle_progress()` / `arc_week_plan()` | 计划 vs 实际负荷、依从率、本周课表 |
+| 团队 | `arc_team_overview()` | 成员数、需关注、数据不足、7 日负荷、平均就绪度 |
+
+阈值来自 `rules` 表的生效版本（`arc_active_rule()`），不在函数里硬编码。
+
+查一次当日总览：
+
+```bash
+npm run q -- --as demo@third.world "select public.arc_daily_summary(a.id, null) from public.athletes a where a.user_id = auth.uid()"
 ```
 
 ```

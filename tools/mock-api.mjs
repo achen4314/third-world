@@ -69,10 +69,41 @@ const metrics = [];
     metrics.push({ athlete_id: ATH, metric_date: dayOffset(i), metric_id: "sleep.tst", value: 380 + i * 9, unit: "min", quality: "ok", source: "manual" });
     metrics.push({ athlete_id: ATH, metric_date: dayOffset(i), metric_id: "hrv.rmssd", value: 52 + i * 2, unit: "ms", quality: "ok", source: "manual" });
   }
+  // 今天（还没练）：与 0011 的真实行为一致——状态量延续，TL 不写
+  if (ctl !== null) {
+    metrics.push({ athlete_id: ATH, metric_date: dayOffset(0), metric_id: "ctl", value: +ctl.toFixed(2), unit: "AU", quality: "ok", source: "manual" });
+    metrics.push({ athlete_id: ATH, metric_date: dayOffset(0), metric_id: "atl", value: +atl.toFixed(2), unit: "AU", quality: "ok", source: "manual" });
+    metrics.push({ athlete_id: ATH, metric_date: dayOffset(0), metric_id: "acwr.ewma", value: +(acu / chr).toFixed(3), unit: "ratio", quality: "ok", source: "manual" });
+    metrics.push({ athlete_id: ATH, metric_date: dayOffset(0), metric_id: "readiness", value: 78, unit: "score", quality: "ok", source: "manual" });
+  }
 })();
 
-const ATHLETES = [
-  { id: ATH, user_id: UID, org_id: ORG, team_id: null, full_name: "演示账号", sex: "male", status: "active", height_cm: 180, weight_kg: 74, teams: { name: "一队" } },
+// 服务端聚合（对应真实库的 arc_daily_summary / arc_team_overview），
+// 前端只渲染这两个结构，所以 mock 也必须返回同样的形状，否则测出来的不是真路径。
+const SUMMARY = {
+  athlete_id: ATH,
+  date: dayOffset(0),
+  timezone: "Asia/Shanghai",
+  load: { tl: null, ctl: 88.4, atl: 67.2, tsb: 21.2, acwr: 0.76, acwr_rolling: null, tm: null, ts: null, quality: "ok", source: "manual" },
+  recovery: { rmssd: 64, lnrmssd: 4.1589, baseline: 4.1009, swc: 0.061, z: 0.95, sleep_tst: 452, sleep_debt: 118, quality: "ok" },
+  readiness: { score: 78, parts: { load: 100, hrv: 74, sleep: 94 }, weights: { load: 0.35, hrv: 0.35, sleep: 0.3 }, coverage: 1, flags: [] },
+  plan: [{ scheduled_date: dayOffset(0), status: "planned", title: "下肢力量 · VBT", purpose: "strength", duration_min: 68, intensity_rpe: 7 }],
+  flags: [],
+  missing: ["滚动 ACWR 需 7/7 与 ≥26/28 有效天，当前不足"],
+  rule_version: "v1.0"
+};
+
+const TEAM_OVERVIEW = {
+  org_id: ORG, team_id: null, date: dayOffset(0),
+  members: 2, warn: 0, thin: 1, load7: 1766, avg_acwr: 0.76, avg_readiness: 78,
+  rule_version: "v1.0",
+  members_detail: [
+    { id: ATH, name: "演示账号", load7: 1766, acwr: 0.76, readiness: 78, last_date: dayOffset(1), status: "ok" },
+    { id: "44444444-4444-4444-4444-444444444444", name: "周 珩", load7: 0, acwr: null, readiness: null, last_date: null, status: "thin" }
+  ]
+};
+
+const ATHLETES = [  { id: ATH, user_id: UID, org_id: ORG, team_id: null, full_name: "演示账号", sex: "male", status: "active", height_cm: 180, weight_kg: 74, teams: { name: "一队" } },
   { id: "44444444-4444-4444-4444-444444444444", user_id: null, org_id: ORG, team_id: null, full_name: "周 珩", sex: "male", status: "active", height_cm: 176, weight_kg: 70, teams: { name: "一队" } }
 ];
 
@@ -150,6 +181,9 @@ const server = http.createServer((req, res) => {
     const fn = p.split("/").pop();
     if (fn === "arc_create_invite") return json(res, 200, [{ code: "MOCK8X2K", org_id: ORG, team_id: null, role: "athlete", expires_at: null, max_uses: 10 }]);
     if (fn === "arc_add_athlete") return json(res, 200, "55555555-5555-5555-5555-555555555555");
+    if (fn === "arc_daily_summary") return json(res, 200, SUMMARY);
+    if (fn === "arc_team_overview") return json(res, 200, TEAM_OVERVIEW);
+    if (fn === "arc_active_rule") return json(res, 200, { acwr: { low: 0.8, high: 1.3, danger: 1.5 }, monotony_max: 2, strain_max: 6000 });
     return json(res, 200, ORG);
   }
 

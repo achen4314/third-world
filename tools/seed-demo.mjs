@@ -95,10 +95,13 @@ try {
     n++;
   }
 
-  // 恢复数据：最近 7 天睡眠与 HRV
-  for (let i = 1; i <= 7; i++) {
-    const tst = 380 + ((i * 17) % 90);
-    const hrv = 52 + ((i * 7) % 24);
+  // 恢复数据：最近 7 天睡眠与 HRV（含今天，否则今日页 HRV 只能是「—」）
+  // 序列刻意平滑、今天落在基线附近：演示账号不该一登录就背一个假的「恢复极差」告警。
+  const hrvSeries = [64, 63, 65, 64, 63, 65, 64, 64];
+  const tstSeries = [470, 455, 480, 465, 450, 475, 460, 470];
+  for (let i = 0; i <= 7; i++) {
+    const tst = tstSeries[i];
+    const hrv = hrvSeries[i];
     for (const [metric, value, unit] of [["sleep.tst", tst, "min"], ["hrv.rmssd", hrv, "ms"]]) {
       await c.query(
         `insert into public.daily_metrics (org_id, athlete_id, metric_date, metric_id, value, unit, quality, source, calc_version)
@@ -122,10 +125,102 @@ try {
     [s.id]
   );
 
+  // ── 规则版本 / 课库 / 周期计划 / 排课（0007 之后新增的三张核心表）──
+  await c.query(
+    `insert into public.rules (org_id, version, name, payload, is_active)
+     values ($1, 'v1.0', '默认口径 v1.0', public.arc_default_rule_payload(), true)
+     on conflict (org_id, version) do nothing`,
+    [me.org_id]
+  );
+
+  // 课库：两节课 + 条目（绝对重量与 %1RM 互斥，这里分别示范两种写法）
+  const lib = [
+    { title: "下肢力量 · VBT", purpose: "strength", dur: 68, rpe: 7, tags: ["下肢", "VBT"],
+      items: [
+        { ex: "深蹲", sets: 5, reps: 3, pct: 80, rest: 180, vmin: 0.5 },
+        { ex: "罗马尼亚硬拉", sets: 4, reps: 6, load: 100, rest: 120 },
+        { ex: "保加利亚分腿蹲", sets: 3, reps: 8, load: 24, rest: 90 }
+      ] },
+    { title: "有氧恢复 · 自行车", purpose: "recovery", dur: 45, rpe: 3, tags: ["恢复"],
+      items: [{ ex: "功率车 Z1", sets: 1, reps: null, dur: 2700, rest: null }] }
+  ];
+  let tplIds = [];
+  for (const t of lib) {
+    const exist = await one(`select id from public.session_templates where org_id = $1 and title = $2`, [me.org_id, t.title]);
+    let tid = exist && exist.id;
+    if (!tid) {
+      const r = await one(
+        `insert into public.session_templates (org_id, title, purpose, duration_min, intensity_rpe, tags, created_by)
+         values ($1,$2,$3,$4,$5,$6,$7) returning id`,
+        [me.org_id, t.title, t.purpose, t.dur, t.rpe, t.tags, me.id]
+      );
+      tid = r.id;
+      let seq = 1;
+      for (const it of t.items) {
+        await c.query(
+          `insert into public.session_items (template_id, org_id, seq, exercise, sets, reps, load_kg, pct_1rm, duration_s, rest_s, vel_min)
+           values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+          [tid, me.org_id, seq++, it.ex, it.sets, it.reps, it.load ?? null, it.pct ?? null, it.dur ?? null, it.rest ?? null, it.vmin ?? null]
+        );
+      }
+    }
+    tplIds.push(tid);
+  }
+
+  // 周期计划：本月 4 周，个人计划
+  const cyc = await one(
+    `select id from public.plan_cycles where org_id = $1 and athlete_id = $2 and name = '演示周期 · 基础期'`,
+    [me.org_id, me.athlete_id]
+  );
+  let cycId = cyc && cyc.id;
+  if (!cycId) {
+    const r = await one(
+      `insert into public.plan_cycles (org_id, athlete_id, name, goal, start_date, end_date, phase, status, created_by)
+       values ($1,$2,'演示周期 · 基础期','演示用：建立有氧基底并维持力量',
+               date_trunc('month', (now() at time zone 'Asia/Shanghai')::date)::date,
+               (date_trunc('month', (now() at time zone 'Asia/Shanghai')::date) + interval '27 days')::date,
+               'base','active',$3)
+       returning id`,
+      [me.org_id, me.athlete_id, me.id]
+    );
+    cycId = r.id;
+    for (let w = 1; w <= 4; w++) {
+      await c.query(
+        `insert into public.plan_blocks (cycle_id, org_id, week_index, start_date, end_date, focus, target_load_min, target_load_max)
+         values ($1,$2,$3::smallint,
+                 (select start_date from public.plan_cycles where id = $1) + ($3::int - 1) * 7,
+                 (select start_date from public.plan_cycles where id = $1) + ($3::int - 1) * 7 + 6,
+                 $4, $5, $6)`,
+        [cycId, me.org_id, w, ["解剖适应", "力量积累", "力量积累", "减量"][w - 1], 200 + w * 40, 320 + w * 40]
+      );
+    }
+  }
+
+  // 排课：今天一节（未完成）、昨天一节（已完成并挂上真实训练）
+  for (const [offset, status] of [[0, "planned"], [1, "done"]]) {
+    const d = await one(
+      `select ((now() at time zone 'Asia/Shanghai')::date - $1::int)::date as d`, [offset]);
+    const has = await one(
+      `select id from public.session_assignments where athlete_id = $1 and scheduled_date = $2 and template_id = $3`,
+      [me.athlete_id, d.d, tplIds[offset === 0 ? 0 : 1]]);
+    if (has) continue;
+    const act = status === "done"
+      ? await one(`select id from public.activities where athlete_id = $1
+                    and (started_at at time zone 'Asia/Shanghai')::date = $2::date limit 1`, [me.athlete_id, d.d])
+      : null;
+    await c.query(
+      `insert into public.session_assignments (org_id, athlete_id, template_id, scheduled_date, status, activity_id, planned_load, created_by)
+       values ($1,$2,$3,$4,$5,$6,$7,$8)`,
+      [me.org_id, me.athlete_id, tplIds[offset === 0 ? 0 : 1], d.d, status, act ? act.id : null,
+       offset === 0 ? 320 : 155, me.id]
+    );
+  }
+
   // 触发一次全量重算（正常情况下由 activities 触发器自动完成，这里确保历史日期都算到）
   await c.query("select public.arc_recompute_metrics($1, current_date)", [me.athlete_id]);
+  await c.query("select public.arc_recompute_recovery($1, current_date)", [me.athlete_id]);
   await c.query("commit");
-  console.log(`已写入 ${n} 条训练、14 条恢复指标、1 次跳跃测试（账号 ${EMAIL}）`);
+  console.log(`已写入 ${n} 条训练、8 天恢复指标、1 次跳跃测试、2 节课库、1 个周期计划（账号 ${EMAIL}）`);
 } catch (e) {
   await c.query("rollback");
   throw e;

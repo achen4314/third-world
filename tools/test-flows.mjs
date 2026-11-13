@@ -133,6 +133,9 @@ async function mkUser(key, name) {
 console.log("\n第三世界 · 业务流程回归（真实库 / 事务内）");
 console.log("─".repeat(72));
 
+// 回滚判据：跑之前先记下审计表行数，跑完必须回到同一个数
+const auditBefore = (await one("select count(*)::int n from public.audit_logs")).n;
+
 await q("begin");
 
 try {
@@ -188,7 +191,13 @@ try {
   const byDay = {};
   for (const r of dm.rows) (byDay[r.d] = byDay[r.d] || {})[r.metric_id] = Number(r.value);
 
-  check("指标已落库（两天）", Object.keys(byDay).length === 2, `天数=${Object.keys(byDay).length}`);
+  check("两个训练日都有 TL 行", !!byDay[dayA]?.["tl.srpe"] && !!byDay[dayB]?.["tl.srpe"],
+    `天数=${Object.keys(byDay).length}`);
+  // 0011：状态量逐日推进，休息日有 CTL/ACWR 但没有 TL（不补 0）
+  const restDay = "2026-11-06";
+  check("休息日状态量延续（CTL 有值）", byDay[restDay]?.ctl !== undefined, `ctl=${byDay[restDay]?.ctl}`);
+  check("休息日不写 TL（缺测=无行）", byDay[restDay]?.["tl.srpe"] === undefined,
+    `tl=${byDay[restDay]?.["tl.srpe"]}`);
   check("Day1 TL = 100", byDay[dayA]?.["tl.srpe"] === 100, `实际 ${byDay[dayA]?.["tl.srpe"]}`);
   check("Day2 TL = 60（当天单独聚合）", byDay[dayB]?.["tl.srpe"] === 60, `实际 ${byDay[dayB]?.["tl.srpe"]}`);
   const expCtl1 = 100;
@@ -327,6 +336,230 @@ try {
   check("记录了开通 / 发码 / 兑换 / 训练写入",
     ["org.bootstrap", "invite.create", "invite.redeem", "activities.insert"].every((k) => kinds.includes(k)),
     kinds.join(", "));
+
+  /* ── H. 周期计划 / 课库 / 规则版本（0007）────────────────────────────── */
+  console.log("\nH. 周期计划 / 课库 / 规则版本");
+  const tpl = await asUser(coachUser.id, async () =>
+    one(`insert into public.session_templates (org_id, title, purpose, duration_min, intensity_rpe, tags)
+         values ($1, '下肢力量 · VBT', 'strength', 68, 7, array['下肢','VBT']) returning id`, [coachOrg]));
+  check("教练可建课库模板", !!tpl?.id);
+
+  await asUser(coachUser.id, async () => {
+    await q(`insert into public.session_items (template_id, org_id, seq, exercise, sets, reps, pct_1rm, rest_s, vel_min)
+             values ($1,$2,1,'深蹲',5,3,80,180,0.5)`, [tpl.id, coachOrg]);
+    await q(`insert into public.session_items (template_id, org_id, seq, exercise, sets, reps, load_kg, rest_s)
+             values ($1,$2,2,'罗马尼亚硬拉',4,6,100,120)`, [tpl.id, coachOrg]);
+  });
+  const items = await one(`select count(*)::int n from public.session_items where template_id = $1`, [tpl.id]);
+  check("课库条目写入 2 条", items.n === 2, `n=${items.n}`);
+
+  await expectError("绝对重量与 %1RM 不能同时填", async () =>
+    asUser(coachUser.id, () =>
+      q(`insert into public.session_items (template_id, org_id, seq, exercise, sets, reps, load_kg, pct_1rm)
+         values ($1,$2,3,'冲突行',3,5,100,80)`, [tpl.id, coachOrg])), "23514");
+
+  await expectError("运动员不能建课库模板", async () =>
+    asUser(athleteUser.id, () =>
+      q(`insert into public.session_templates (org_id, title) values ($1, '偷建模板')`, [soloOrg])), "42501");
+
+  const cycle = await asUser(coachUser.id, async () =>
+    one(`insert into public.plan_cycles (org_id, athlete_id, name, goal, start_date, end_date, phase, status, created_by)
+         values ($1,$2,'冬训基础期','提升起跳功率','2026-11-02','2026-11-29','base','active',$3) returning id`,
+      [coachOrg, nath.id, coachUser.id]));
+  check("建立周期计划", !!cycle?.id);
+
+  await asUser(coachUser.id, async () =>
+    q(`insert into public.plan_blocks (cycle_id, org_id, week_index, start_date, end_date, focus, target_load_min, target_load_max)
+       values ($1,$2,1,'2026-11-02','2026-11-08','解剖适应',200,320)`, [cycle.id, coachOrg]));
+  const blk = await one(`select count(*)::int n from public.plan_blocks where cycle_id = $1`, [cycle.id]);
+  check("周期块按周写入", blk.n === 1, `n=${blk.n}`);
+
+  const asg = await asUser(coachUser.id, async () =>
+    one(`select public.arc_assign_session($1,$2,$3::date,'首次课') as id`, [nath.id, tpl.id, "2026-11-06"]));
+  check("排课成功", !!asg?.id);
+
+  const week = await asUser(coachUser.id, async () =>
+    one(`select count(*)::int n, max(title) t from public.arc_week_plan($1, $2::date)`, [nath.id, "2026-11-06"]));
+  check("本周计划能读出排的课", week.n === 1 && week.t === "下肢力量 · VBT", `n=${week.n} t=${week.t}`);
+
+  // 计划 50 AU，实际 45 AU（F 组写入的冲刺课）→ 执行率 0.9；状态改 done 后依从率 1
+  await asUser(coachUser.id, async () =>
+    q(`update public.session_assignments set planned_load = 50 where id = $1`, [asg.id]));
+  const prog1 = await asUser(coachUser.id, async () =>
+    one(`select public.arc_cycle_progress($1) as p`, [cycle.id]));
+  check("执行度：计划 50 / 实际 45 → 比值 0.9",
+    Number(prog1.p.load.ratio) === 0.9, `ratio=${prog1.p.load.ratio} actual=${prog1.p.load.actual}`);
+  check("执行度：未完成时依从率 0", Number(prog1.p.assignments.adherence) === 0);
+
+  await asUser(coachUser.id, async () =>
+    q(`update public.session_assignments set status = 'done' where id = $1`, [asg.id]));
+  const prog2 = await asUser(coachUser.id, async () =>
+    one(`select public.arc_cycle_progress($1) as p`, [cycle.id]));
+  check("标记完成后依从率 1", Number(prog2.p.assignments.adherence) === 1);
+
+  const ruleId = await asUser(coachUser.id, async () =>
+    one(`select public.arc_seed_default_rules($1) as id`, [coachOrg]));
+  check("写入默认规则版本 v1.0", !!ruleId?.id);
+  const active = await asUser(coachUser.id, async () =>
+    one(`select public.arc_active_rule($1) as r`, [coachOrg]));
+  check("生效规则含 ACWR 区间阈值",
+    active.r?.acwr?.low === 0.8 && active.r?.acwr?.danger === 1.5,
+    `low=${active.r?.acwr?.low} danger=${active.r?.acwr?.danger}`);
+
+  await expectError("运动员不能切换规则版本", async () =>
+    asUser(athleteUser.id, () => q(`select public.arc_activate_rule($1)`, [ruleId.id])), "42501");
+
+  await expectError("同一组织不能有两个生效规则版本", async () =>
+    asUser(coachUser.id, async () => {
+      await q(`insert into public.rules (org_id, version, name, payload, is_active) values ($1,'v9.9','并发版本','{}'::jsonb,true)`,
+        [coachOrg]);
+    }), "23505");
+
+  const outTpl = await asUser(outsider.id, async () =>
+    one(`select count(*)::int n from public.session_templates`));
+  check("外部账号读不到课库", outTpl.n === 0, `n=${outTpl.n}`);
+  const outPlan = await asUser(outsider.id, async () =>
+    one(`select count(*)::int n from public.plan_cycles`));
+  check("外部账号读不到计划", outPlan.n === 0, `n=${outPlan.n}`);
+
+  /* ── I. 具体计算：跳跃 / VBT / 恢复 / 就绪 ─────────────────────────── */
+  console.log("\nI. 具体计算");
+  // 体重是 PPO 的输入；没有体重就不该出 PPO（不猜）
+  await asUser(athleteUser.id, async () =>
+    q(`update public.athletes set weight_kg = 74 where id = $1`, [ath.id]));
+
+  const jsess = await asUser(athleteUser.id, async () =>
+    one(`insert into public.test_sessions (org_id, athlete_id, kind, performed_at, source)
+         values ($1,$2,'jump','2026-11-06 10:00+08','manual') returning id`, [soloOrg, ath.id]));
+  await asUser(athleteUser.id, async () =>
+    q(`insert into public.jump_tests (session_id, jump_type, flight_ms, contact_ms)
+       values ($1,'cmj',600,500)`, [jsess.id]));
+
+  const jt = await one(`select height_cm, rsi from public.jump_tests where session_id = $1`, [jsess.id]);
+  check("跳跃高度由飞行时间自动补算 44.15cm", Number(jt.height_cm) === 44.15, `实际 ${jt.height_cm}`);
+  check("RSI 自动补算 0.883", Number(jt.rsi) === 0.883, `实际 ${jt.rsi}`);
+
+  const jumpDay = await q(`select metric_id, value from public.daily_metrics
+                            where athlete_id = $1 and metric_date = '2026-11-06'::date and metric_id like 'jump.%'`, [ath.id]);
+  const jmap = Object.fromEntries(jumpDay.rows.map((r) => [r.metric_id, Number(r.value)]));
+  check("跳跃指标落库（高度/RSI/触地/PPO）",
+    jmap["jump.height"] === 44.15 && jmap["jump.rsi"] === 0.883 && jmap["jump.contact_time"] === 500,
+    JSON.stringify(jmap));
+  check("PPO 用体重算（44.15cm/74kg → 3977.1W）", jmap["jump.ppo"] === 3977.1, `实际 ${jmap["jump.ppo"]}`);
+
+  const vsess = await asUser(athleteUser.id, async () =>
+    one(`insert into public.test_sessions (org_id, athlete_id, kind, performed_at, source)
+         values ($1,$2,'vbt','2026-11-07 10:00+08','manual') returning id`, [soloOrg, ath.id]));
+  const loads = [[60, 0.95], [80, 0.82], [100, 0.70], [120, 0.58]];
+  await asUser(athleteUser.id, async () => {
+    for (const [ld, mpv] of loads) {
+      await q(`insert into public.vbt_sets (session_id, exercise, load_kg, reps, mpv)
+               values ($1,'深蹲',$2,3,$3)`, [vsess.id, ld, mpv]);
+    }
+  });
+  const vrows = await q(`select load_kg, mpv, vl_pct, power_w from public.vbt_sets
+                          where session_id = $1 order by load_kg`, [vsess.id]);
+  check("速度损失以组内最快一次为基准（首组 0%，末组 38.95%）",
+    Number(vrows.rows[0].vl_pct) === 0 && Math.abs(Number(vrows.rows[3].vl_pct) - 38.95) < 0.01,
+    `首 ${vrows.rows[0].vl_pct} 末 ${vrows.rows[3].vl_pct}`);
+  check("功率 = load·g·MPV（100kg × 0.70 = 686.7W）",
+    Math.abs(Number(vrows.rows[2].power_w) - 686.7) < 0.1, `实际 ${vrows.rows[2].power_w}`);
+
+  const prof = await asUser(athleteUser.id, async () =>
+    one(`select public.arc_vbt_profile($1,'深蹲',0.3) as p`, [vsess.id]));
+  check("负荷-速度剖面可外推 1RM", prof.p.ok === true, JSON.stringify(prof.p).slice(0, 90));
+  check("外推 1RM 落在合理区间（140–200kg）",
+    prof.p.load_1rm > 140 && prof.p.load_1rm < 200, `1RM=${prof.p.load_1rm}`);
+
+  // 恢复：7 天 HRV + 睡眠 → 基准 / SWC / 偏离 / 睡眠债 / 就绪度
+  const hrv = [64, 62, 66, 63, 65, 61, 64];
+  const tst = [450, 470, 430, 480, 440, 460, 455];
+  await asUser(athleteUser.id, async () => {
+    for (let i = 0; i < 7; i++) {
+      const d = `2026-11-0${1 + i}`;
+      await q(`insert into public.daily_metrics (org_id, athlete_id, metric_date, metric_id, value, unit, source)
+               values ($1,$2,$3::date,'hrv.rmssd',$4,'ms','manual')
+               on conflict (athlete_id, metric_date, metric_id) do update set value = excluded.value`,
+        [soloOrg, ath.id, d, hrv[i]]);
+      await q(`insert into public.daily_metrics (org_id, athlete_id, metric_date, metric_id, value, unit, source)
+               values ($1,$2,$3::date,'sleep.tst',$4,'min','manual')
+               on conflict (athlete_id, metric_date, metric_id) do update set value = excluded.value`,
+        [soloOrg, ath.id, d, tst[i]]);
+    }
+  });
+
+  const rec = await q(`select metric_id, value from public.daily_metrics
+                        where athlete_id = $1 and metric_date = '2026-11-07'::date
+                          and metric_id in ('hrv.lnrmssd','hrv.baseline','hrv.swc','hrv.z','sleep.debt','readiness')`,
+    [ath.id]);
+  const rmap = Object.fromEntries(rec.rows.map((r) => [r.metric_id, Number(r.value)]));
+  check("lnRMSSD = ln(64) = 4.1589", Math.abs(rmap["hrv.lnrmssd"] - 4.1589) < 0.001, `实际 ${rmap["hrv.lnrmssd"]}`);
+  check("7 日 HRV 基准已生成", rmap["hrv.baseline"] > 4 && rmap["hrv.baseline"] < 4.3, `baseline=${rmap["hrv.baseline"]}`);
+  check("SWC = 0.5·SD 已生成", rmap["hrv.swc"] > 0 && rmap["hrv.swc"] < 0.2, `swc=${rmap["hrv.swc"]}`);
+  check("偏离 z 已生成", typeof rmap["hrv.z"] === "number", `z=${rmap["hrv.z"]}`);
+  check("睡眠债 = 7×480 − Σ7日 = 3360 − 3185 = 175min",
+    rmap["sleep.debt"] === 175, `debt=${rmap["sleep.debt"]}`);
+  check("就绪度已计算（0–100）", rmap["readiness"] > 0 && rmap["readiness"] <= 100, `readiness=${rmap["readiness"]}`);
+
+  // 只有 HRV、没有睡眠的那天：仍给分，但覆盖度 < 1，且明确标注缺测
+  const sum = await asUser(athleteUser.id, async () =>
+    one(`select public.arc_daily_summary($1, '2026-11-12'::date) as s`, [ath.id]));
+  check("当日总览返回结构完整",
+    sum.s?.date === "2026-11-12" && sum.s.load && sum.s.recovery && sum.s.readiness, "");
+  check("缺测被显式列出（未当作 0）",
+    Array.isArray(sum.s.missing) && sum.s.missing.length > 0, sum.s.missing.join(" / "));
+
+  await expectError("外部账号不能看别人的当日总览", async () =>
+    asUser(outsider.id, () => q(`select public.arc_daily_summary($1, current_date)`, [nath.id])), "42501");
+
+  /* ── J. 删除 / 导出 / 注销 ─────────────────────────────────────────── */
+  console.log("\nJ. 删除、导出、注销");
+  const exp = await asUser(athleteUser.id, async () =>
+    one(`select public.arc_export_my_data() as e`));
+  const expOrgs = exp.e.orgs?.length ?? 0;
+  const expActs = exp.e.activities?.length ?? 0;
+  check("导出结构自带版本号", exp.e.schema === "arc-export/1");
+  check("导出只含自己组织的数据", expOrgs === 1, `orgs=${expOrgs}`);
+  check("导出包含训练与指标", expActs >= 2 && exp.e.daily_metrics.length > 0,
+    `activities=${expActs} metrics=${exp.e.daily_metrics.length}`);
+
+  // 越权删除要趁记录还在：先拿「别人那条」试，再删自己的
+  const forbiddenTarget = await one(`select id from public.activities where athlete_id = $1 and training_load = 100`, [ath.id]);
+  await expectError("不能删别人的训练", async () =>
+    asUser(outsider.id, () => q(`select public.arc_delete_activity($1)`, [forbiddenTarget.id])), "42501");
+
+  const delTarget = await one(`select id from public.activities where athlete_id = $1 and training_load = 60`, [ath.id]);
+  await asUser(athleteUser.id, async () =>
+    q(`select public.arc_delete_activity($1)`, [delTarget.id]));
+  const afterDel = await one(`select count(*)::int n from public.activities where id = $1`, [delTarget.id]);
+  check("训练已删除", afterDel.n === 0);
+  const delAudit = await one(`select count(*)::int n from public.audit_logs
+                               where action = 'activity.delete' and target_id = $1`, [delTarget.id]);
+  check("删除动作留痕", delAudit.n === 1, `n=${delAudit.n}`);
+
+  // 删掉当天唯一一条训练后，那天的 TL 不应残留（缺测就是没行，不是 0）
+  const staleTl = await one(`select count(*)::int n from public.daily_metrics
+                              where athlete_id = $1 and metric_date = '2026-11-05'::date and metric_id = 'tl.srpe'`, [ath.id]);
+  check("删除训练后当日 TL 不残留", staleTl.n === 0, `n=${staleTl.n}`);
+
+  // 注销：新建一个只用个人空间的账号，走真删（auth.users 也被删掉）
+  const bye = await mkUser("bye", "要注销的人");
+  const byeOrg = (await asUser(bye.id, async () =>
+    one(`select public.arc_join_solo('要注销的人') as org`))).org;
+  await asUser(bye.id, () =>
+    q(`insert into public.activities (org_id, athlete_id, started_at, sport, duration_s, training_load, source)
+       select $1, a.id, '2026-11-08 09:00+08', '跑步', 1800, 30, 'manual'
+       from public.athletes a where a.user_id = $2`, [byeOrg, bye.id]));
+
+  await asUser(bye.id, async () => q(`select public.arc_delete_my_account()`));
+  const goneUser = await one(`select count(*)::int n from auth.users where id = $1`, [bye.id]);
+  const goneApp = await one(`select count(*)::int n from public.app_users where id = $1`, [bye.id]);
+  const goneOrg = await one(`select count(*)::int n from public.orgs where id = $1`, [byeOrg]);
+  check("注销后 auth 账号已删除", goneUser.n === 0, `n=${goneUser.n}`);
+  check("注销后 app_users 已删除", goneApp.n === 0, `n=${goneApp.n}`);
+  check("注销后个人空间已清空（连带训练）", goneOrg.n === 0, `n=${goneOrg.n}`);
+  const accAudit = await one(`select count(*)::int n from public.audit_logs where action = 'account.delete'`);
+  check("注销留痕（actor 置空但记录仍在）", accAudit.n >= 1, `n=${accAudit.n}`);
 } finally {
   if (KEEP) {
     await q("commit");
@@ -336,8 +569,13 @@ try {
     const residue = await one(`select
       (select count(*) from auth.users where email like '%@arc.local')::int users,
       (select count(*) from public.orgs where name in ('测试队'))::int orgs,
-      (select count(*) from public.audit_logs where occurred_at > now() - interval '10 minutes')::int audits`);
-    console.log(`\n已回滚 · 残留 auth 用户 ${residue.users} / 测试组织 ${residue.orgs} / 近 10 分钟新增审计行 ${residue.audits}（应为 0：测试写入随事务回滚）`);
+      (select count(*) from public.audit_logs)::int audits`);
+    const auditDelta = residue.audits - auditBefore;
+    console.log(`\n已回滚 · 残留 auth 用户 ${residue.users} / 测试组织 ${residue.orgs} / 审计行净增 ${auditDelta}（应为 0）`);
+    if (residue.users !== 0 || residue.orgs !== 0 || auditDelta !== 0) {
+      console.log("⚠ 有残留：事务回滚没兜住，需人工查");
+      process.exitCode = 1;
+    }
   }
 }
 

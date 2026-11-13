@@ -72,7 +72,7 @@ const TABLES = await many(`
   order by 1`);
 const tableNames = TABLES.map((r) => r.t);
 const businessTables = tableNames.filter((t) => t !== "raw_samples_default");
-const EXPECT_TABLES = 18;   // 0006 新增 invites
+const EXPECT_TABLES = 24;   // 0006 新增 invites；0007 新增 6 张（计划/课库/规则）
 check("A 结构", "业务表数量（不含分区子表）", tableNames.length === EXPECT_TABLES, tableNames.length, EXPECT_TABLES);
 
 // A1 主键

@@ -88,7 +88,16 @@
     }
     return rows;
   }
-  function load() { return computeLoad(getTL()); }
+  function load() {
+    // 真实库：逐日负荷序列直接来自服务端（daily_metrics 里的 ctl/atl/tsb/acwr/tm/ts），
+    // 前端不再递推一遍——两套实现迟早会算出两个数。
+    const srv = A.SRV;
+    if (srv && srv.some(x => x && (x.ctl !== null || x.acwr !== null))) {
+      return srv.map((x, i) => ({ i, date: A.DATES[i], tl: x.tl, ctl: x.ctl, atl: x.atl,
+        tsb: x.tsb, rolling: x.rolling, ewma: x.acwr, tm: x.tm, ts: x.ts }));
+    }
+    return computeLoad(getTL());
+  }
   function last() { const r = load(); return r[r.length - 1]; }
   function regression(pts) {
     const n = pts.length;
@@ -494,6 +503,30 @@
   /* 今日 */
   (function () {
     const l = L();
+    // 真实库：HRV 与今日计划直接取服务端 arc_daily_summary()，缺测就显示「—」不推算
+    const SM = A.SUMMARY;
+    const TODAY = (function () {
+      if (!SM) return { hrv: "64", hrvNote: "基线 60.4 ms · 未显著偏离",
+                        planCount: "1", planText: "力量 · 下肢 VBT · 68 min" };
+      const r = SM.recovery || {};
+      const base = r.baseline == null ? null : Math.exp(Number(r.baseline));
+      const z = r.z == null ? null : Number(r.z);
+      return {
+        hrv: r.rmssd == null ? "—" : String(Math.round(Number(r.rmssd))),
+        hrvNote: r.rmssd == null
+          ? "今日未记录 HRV（不推算、不补 0）"
+          : (base == null
+              ? "基线样本不足，尚未建立个人基准"
+              : "基线 " + base.toFixed(1) + " ms · " + (z == null ? "偏离不可算"
+                  : (Math.abs(z) < 1 ? "基线内" : (z > 0 ? "高于基线 " + z.toFixed(1) + " SWC" : "低于基线 " + Math.abs(z).toFixed(1) + " SWC")))),
+        planCount: String((SM.plan || []).length),
+        planText: (SM.plan || []).length
+          ? SM.plan.map(function (p) {
+              return (p.title || "训练") + (p.duration_min ? " · " + p.duration_min + " min" : "");
+            }).join(" / ")
+          : "今天没有排课"
+      };
+    })();
     page("today", "今日", "今天该练什么，身体状态够不够？", "TODAY / 单一主状态", [
       S_hero({ kicker: "规则引擎 · rule-engine v1.0 · 2026-11-13", title: "维持既定强度：本周目标日 TL 118",
         lead: "依据三条可解释规则生成。未使用任何无解释的评分或颜色等级；任一输入不足时结论会降级为「数据不足」，不生成建议。",
@@ -505,8 +538,8 @@
         actions: [{ label: "查看依据", sheet: "rule", id: "R-01" }, { label: "应用为周期块", route: "train/plan", primary: true }] }),
       S_metrics([
         { label: "负荷 · ACWR(EWMA)", value: fmt(l.ewma, 2), delta: "急性 / 慢性负荷比 · 28 日", metricId: "acwr.ewma", win: "EWMA", src: "device", go: "analyze/load" },
-        { label: "恢复 · HRV", value: "64", unit: "ms", delta: "基线 60.4 ms · 未显著偏离", metricId: "hrv.rmssd", win: "28 日", src: "device", go: "analyze/recovery" },
-        { label: "今日计划", value: "1", unit: "课", delta: "力量 · 下肢 VBT · 68 min", go: "train/session" }
+        { label: "恢复 · HRV", value: TODAY.hrv, unit: "ms", delta: TODAY.hrvNote, metricId: "hrv.rmssd", win: "28 日", src: "device", go: "analyze/recovery" },
+        { label: "今日计划", value: TODAY.planCount, unit: "课", delta: TODAY.planText, go: "train/session" }
       ], 3),
       S_cards("今日三个入口", "不做图表堆叠，只给下一步动作", [
         { icon: "bolt", title: "开始 VBT 采集", sub: "IMU 拉取 / 手动填入 · 来源互斥", value: "进入", route: "lab/vbt" },
@@ -1023,6 +1056,20 @@
     // 全部由 A.ATHLETES 现算，避免「库里 2 个人、页面写 8 个人」这种不可信的数
     function teamAgg() {
       const list = A.ATHLETES || [];
+      // 真实库：直接用服务端 arc_team_overview() 的结论，前端不重复算
+      const T = A.TEAM && Array.isArray(A.TEAM.members_detail) ? A.TEAM : null;
+      if (T) {
+        const over = T.members_detail.filter(m => m.acwr !== null && m.acwr > 1.3);
+        return {
+          n: T.members || 0, warn: T.warn || 0, low: T.thin || 0, over,
+          load7: Number(T.load7 || 0),
+          quality: T.avg_readiness == null ? "—" : Math.round(T.avg_readiness),
+          complete: 0, minComplete: 0,
+          overName: over.length ? over[0].name + " " + Number(over[0].acwr).toFixed(2) : "—",
+          ruleVer: T.rule_version || "default",
+          live: true
+        };
+      }
       const n = list.length;
       const warn = list.filter(a => a.flag === "需关注").length;
       const low = list.filter(a => a.flag === "数据不足").length;
@@ -1047,7 +1094,8 @@
         evidence: [
           { label: "样本量 n", value: String(AG.n), detail: "按所辖成员聚合 · 28 日窗口" },
           { label: "ACWR 越界", value: String(AG.over.length), detail: "> 1.30" + (AG.over.length ? " · " + AG.overName : "") },
-          { label: "数据完整度", value: AG.quality + "%", detail: "全队平均 · 最低 " + AG.minComplete + "%" }
+          { label: AG.live ? "平均就绪度" : "数据完整度", value: AG.live ? (AG.quality + " 分") : (AG.quality + "%"),
+            detail: AG.live ? ("由服务端 arc_team_overview 汇总 · 规则版本 " + AG.ruleVer) : ("全队平均 · 最低 " + AG.minComplete + "%") }
         ], actions: [{ label: "查看成员", route: "admin/athletes", primary: true }] }),
       S_metrics([
         { label: "团队 7 日负荷", value: AG.load7.toLocaleString("en-US"), delta: "n=" + AG.n + " · 按所辖成员求和", go: "admin/athletes" },
