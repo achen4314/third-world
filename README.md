@@ -63,6 +63,28 @@ index.html?platform=iphone&route=analyze/load&theme=dark&role=observer&window=7&
 | `docs/04-实时交互图表可行性与对标口径评估.md` | **36 个界面 + 13 类浮层逐一可行性评估**、实时图表能力矩阵与状态一致性、8 个专有评分的完整分档与依据等级、数据融合与字段映射、DEMO 与免责声明 |
 | `docs/05-上线前资源对照与逐项核查报告.md` | 12 类数据库/资源的权限配置对照（三状态）、五节点接入提醒清单、76 项逐项核查报告、上线结论与剩余风险 |
 | `tools/audit.mjs` | 可复现的 CDP 运行时断言脚本（76 项：算法 / 图表 / 交互 / 边界 / 路由） |
+| `supabase/migrations/*.sql` | **数据库唯一事实源**：17 张表 + 37 条 RLS 策略 + 4 个鉴权函数 |
+| `supabase/seed.sql` | 30 条指标口径（22 core + 8 vendor_aligned 隔离） |
+| `supabase/README.md` | Supabase 三种连法、RLS 模型、越权测试、验证状态 |
+| `tools/db-check.cjs` | 可复现的数据库断言脚本（18 项：迁移 / 策略 / 4 类越权 / 缺测不补 0） |
+
+## 仓库与 Supabase 接入
+
+- GitHub：<https://github.com/achen4314/third-world>（公开）
+- Supabase **只认 `supabase/migrations/`**，不会因为仓库连上 GitHub 就获得表结构。
+
+```bash
+brew install supabase/tap/supabase
+supabase login
+supabase link --project-ref <你的 project-ref>
+supabase db push          # 依次执行 migrations/*.sql
+```
+
+推完必须跑一遍越权用例（详见 `supabase/README.md` §4）；本地可先离线验证：
+
+```bash
+npm i -D @electric-sql/pglite && node tools/db-check.cjs
+```
 
 ## 在线预览（初始版本已上线）
 
