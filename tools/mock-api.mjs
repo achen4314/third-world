@@ -105,7 +105,7 @@ function json(res, code, body, extra = {}) {
     "Content-Type": "application/json; charset=utf-8",
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Headers": "authorization,apikey,content-type,prefer,x-client-info",
-    "Access-Control-Allow-Methods": "GET,POST,PATCH,DELETE,OPTIONS",
+    "Access-Control-Allow-Methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS",
     "Access-Control-Expose-Headers": "content-range"
   }, extra));
   res.end(s);
@@ -134,6 +134,10 @@ const server = http.createServer((req, res) => {
     return;
   }
   if (p === "/auth/v1/logout") return json(res, 204, null);
+  if (p === "/auth/v1/user") {
+    if (req.method === "PUT") return json(res, 200, { id: UID, email: EMAIL });
+    return json(res, 200, { id: UID, email: EMAIL });
+  }
   if (p === "/auth/v1/recover") return json(res, 200, {});
   if (p === "/auth/v1/signup") {
     let body = "";

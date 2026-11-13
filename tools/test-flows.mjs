@@ -336,8 +336,8 @@ try {
     const residue = await one(`select
       (select count(*) from auth.users where email like '%@arc.local')::int users,
       (select count(*) from public.orgs where name in ('测试队'))::int orgs,
-      (select count(*) from public.audit_logs)::int audits`);
-    console.log(`\n已回滚 · 残留 auth 用户 ${residue.users} / 测试组织 ${residue.orgs} / 审计行 ${residue.audits}`);
+      (select count(*) from public.audit_logs where occurred_at > now() - interval '10 minutes')::int audits`);
+    console.log(`\n已回滚 · 残留 auth 用户 ${residue.users} / 测试组织 ${residue.orgs} / 近 10 分钟新增审计行 ${residue.audits}（应为 0：测试写入随事务回滚）`);
   }
 }
 

@@ -229,6 +229,13 @@
     emit();
   }
 
+  async function changePassword(newPwd) {
+    if (!S.session) throw new Error("未登录");
+    if (String(newPwd || "").length < 8) throw new Error("新密码至少 8 位");
+    await http("/auth/v1/user", { method: "PUT", body: { password: newPwd } });
+    return true;
+  }
+
   async function resetPassword(email) {
     await http("/auth/v1/recover", { method: "POST", auth: false, body: { email: String(email || "").trim() } });
     return true;
@@ -407,9 +414,17 @@
       S.lastSync = nowText();
       S.reason = S.partial ? "部分数据集读取失败（已按空值呈现，不回填演示数据）" : "已连接真实库";
     } catch (e) {
-      S.mode = "demo";
-      S.reason = "读取失败，已回退到演示数据：" + e.message;
-      restoreDemo();
+      if (e.status === 401 || /JWT|jwt/i.test(String(e.message || ""))) {
+        // 会话失效：清干净并要求重新登录，不能悄悄退化成演示数据让人以为还在看真数据
+        clearSession();
+        S.mode = "demo";
+        S.reason = "登录已失效，请重新登录";
+        restoreDemo();
+      } else {
+        S.mode = "demo";
+        S.reason = "读取失败，已回退到演示数据：" + e.message;
+        restoreDemo();
+      }
     } finally {
       S.busy = false;
       emit();
@@ -688,6 +703,7 @@
     signUp: signUp,
     signOut: signOut,
     resetPassword: resetPassword,
+    changePassword: changePassword,
     reload: load,
     refresh: boot,
     exportMine: exportMine,

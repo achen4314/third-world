@@ -63,7 +63,7 @@
     if (/23505|duplicate key/.test(m)) return "这条记录已存在，不要重复提交。";
     if (/23503|foreign key/.test(m)) return "关联对象不存在（可能已被删除）。";
     if (/23514|check constraint/.test(m)) return "数值超出允许范围，请检查后重试。";
-    if (/network|Failed to fetch|网络不可达/i.test(m)) return "连不上服务器：检查网络或代理。";
+    if (/network|Failed to fetch|网络不可达|load failed/i.test(m)) return "请求没到服务器：可能是网络不通，或浏览器拦了跨域请求（检查 Project URL 与 CORS）。";
     if (/JWT|401/.test(m)) return "登录已失效，请重新登录。";
     return m.replace(/^.*?·\s*/, "").slice(0, 180);
   }
@@ -281,8 +281,14 @@
           '<dt>最后同步</dt><dd>' + esc(s.lastSync || "—") + '</dd>' +
           '<dt>数据量</dt><dd>训练 ' + ((window.ARC.SESSIONS || []).length) + ' 条 · 成员 ' + ((window.ARC.ATHLETES || []).length) + ' 人</dd>' +
           '</dl>' +
-          '<div class="arcui-actions"><button data-u="reload">重新同步</button><button data-u="export">导出我的数据</button><button data-u="signout">退出登录</button></div>'
+          '<div class="arcui-actions"><button data-u="reload">重新同步</button><button data-u="export">导出我的数据</button><button data-u="signout">退出登录</button></div>' +
+          '<div class="arcui-sub2">账号安全</div>' +
+          '<label class="arcui-field"><span>修改密码（至少 8 位）</span>' +
+          '<input id="cNewPwd" type="password" autocomplete="new-password" maxlength="72" placeholder="留空表示不改"></label>' +
+          '<div class="arcui-row"><button class="arcui-primary ghost" data-u="change-pwd" ' + (U.busy ? "disabled" : "") + '>保存新密码</button></div>'
         : '') +
+      (U.err ? '<div class="arcui-err">' + esc(U.err) + '</div>' : "") +
+      (U.msg ? '<div class="arcui-ok">' + esc(U.msg) + '</div>' : "") +
       '<div class="arcui-sub2">连接配置</div>' +
       '<label class="arcui-field"><span>Project URL</span><input id="cUrl" value="' + esc(s.url) + '" placeholder="https://xxx.supabase.co"></label>' +
       '<label class="arcui-field"><span>Publishable key</span><input id="cKey" value="' + esc(s.key) + '" placeholder="sb_publishable_…"></label>' +
@@ -410,6 +416,16 @@
         return;
       }
       if (u === "reload") { close(); await DB.reload(); toast("已重新同步"); return; }
+      if (u === "change-pwd") {
+        var np = val("cNewPwd");
+        if (!np) { U.err = "请输入新密码"; render(); return; }
+        U.busy = true; render();
+        await DB.changePassword(np);
+        U.busy = false; U.err = ""; U.msg = "密码已更新，下次登录用新密码。";
+        render();
+        toast("密码已更新");
+        return;
+      }
       if (u === "export") {
         U.busy = true; render();
         await DB.exportMine();
