@@ -44,7 +44,9 @@
     params: { window: 28, tl: "srpe", acwr: "ewma", context: "night" },
     injectMissing: false, calibrated: false, demoSource: "import",
     sheet: null, palette: false, paletteIndex: 0, manualType: "jump",
-    manualCount: 0
+    manualCount: 0,
+    // true = 当前页面数据来自 Supabase 真实库（RLS 生效）；false = 演示常量
+    dbLive: false
   };
   const SIZES = { iphone: [390, 844], ipad: [1024, 720], mac: [1440, 900] };
   const COLS = { iphone: 1, ipad: 2, mac: 3 };
@@ -468,7 +470,8 @@
     return { kind: "bars", labels: picks.map(j => j.type + " " + j.date), values: picks.map(j => cm(jumpH(j.tf))), color: "var(--indigo)", min: 0, max: 40 };
   }
   function chartTeamLoad() {
-    return { kind: "bars", labels: A.ATHLETES.map(a => a.name.replace(" ", "")), values: A.ATHLETES.map(a => a.load7), color: "var(--indigo)", min: 0, max: 700 };
+    var _v = A.ATHLETES.map(a => a.load7 || 0);
+    return { kind: "bars", labels: A.ATHLETES.map(a => a.name.replace(" ", "")), values: _v, color: "var(--indigo)", min: 0, max: Math.max(200, Math.ceil(Math.max.apply(null, _v.concat([0])) * 1.15)) };
   }
   function chartRepVelocity() {
     return { kind: "bars", labels: ["R1", "R2", "R3", "R4", "R5", "R6"], values: [0.72, 0.70, 0.67, 0.63, 0.59, 0.55], color: "var(--accent)", min: 0, max: 0.9 };
@@ -1017,19 +1020,40 @@
 
   /* 管理后台 */
   (function () {
+    // 全部由 A.ATHLETES 现算，避免「库里 2 个人、页面写 8 个人」这种不可信的数
+    function teamAgg() {
+      const list = A.ATHLETES || [];
+      const n = list.length;
+      const warn = list.filter(a => a.flag === "需关注").length;
+      const low = list.filter(a => a.flag === "数据不足").length;
+      const over = list.filter(a => a.acwr !== null && a.acwr > 1.3);
+      const load7 = list.reduce((x, a) => x + (a.load7 || 0), 0);
+      const avg = key => n ? list.reduce((x, a) => x + (a[key] || 0), 0) / n : 0;
+      const complete = list.filter(a => a.complete > 0);
+      const minComplete = complete.length ? Math.min.apply(null, complete.map(a => a.complete)) : 0;
+      return {
+        n, warn, low, over, load7,
+        complete: Math.round(avg("complete") * 100),
+        quality: Math.round(avg("quality") * 100),
+        minComplete: Math.round(minComplete * 100),
+        overName: over.length ? over[0].name + " " + over[0].acwr.toFixed(2) : "—"
+      };
+    }
+    const AG = teamAgg();
     page("admin", "团队数据看板", "全队谁需要关注？", "ADMIN / 聚合视图", [
-      S_hero({ kicker: "工作区 B · 教练工作台 · 当前角色 " + roleLabel(state.role), title: "8 名成员 · 2 人需关注 · 1 人数据不足",
+      S_hero({ kicker: "工作区 B · 教练工作台 · 当前角色 " + roleLabel(state.role),
+        title: AG.n + " 名成员 · " + AG.warn + " 人需关注 · " + AG.low + " 人数据不足",
         lead: "此页为团队聚合视图，只读，不显示样本级数据，也不允许切换口径。明细请进入成员页；样本级下钻按角色权限决定。",
         evidence: [
-          { label: "样本量 n", value: "8", detail: "按所辖成员聚合 · 28 日窗口" },
-          { label: "ACWR 越界", value: "1", detail: "> 1.30 · 林澈 1.34" },
-          { label: "数据完整度", value: "89%", detail: "全队平均 · 最低 62%" }
+          { label: "样本量 n", value: String(AG.n), detail: "按所辖成员聚合 · 28 日窗口" },
+          { label: "ACWR 越界", value: String(AG.over.length), detail: "> 1.30" + (AG.over.length ? " · " + AG.overName : "") },
+          { label: "数据完整度", value: AG.quality + "%", detail: "全队平均 · 最低 " + AG.minComplete + "%" }
         ], actions: [{ label: "查看成员", route: "admin/athletes", primary: true }] }),
       S_metrics([
-        { label: "团队 7 日负荷", value: "3,660", delta: "n=8 · 按所辖成员求和", go: "admin/athletes" },
-        { label: "计划完成率", value: "87", unit: "%", delta: "n=8 · 平均", go: "admin/athletes" },
-        { label: "风险队列", value: "2", unit: "人", delta: "1 越界 + 1 缺测", go: "admin/athletes" },
-        { label: "数据完整度", value: "89", unit: "%", delta: "n=8 · 28 日有效天平均", go: "admin/fleet" }
+        { label: "团队 7 日负荷", value: AG.load7.toLocaleString("en-US"), delta: "n=" + AG.n + " · 按所辖成员求和", go: "admin/athletes" },
+        { label: "计划完成率", value: String(AG.complete), unit: "%", delta: "n=" + AG.n + " · 平均", go: "admin/athletes" },
+        { label: "风险队列", value: String(AG.warn + AG.low), unit: "人", delta: AG.over.length + " 越界 + " + AG.low + " 不足", go: "admin/athletes" },
+        { label: "数据完整度", value: String(AG.quality), unit: "%", delta: "n=" + AG.n + " · 28 日有效天平均", go: "admin/fleet" }
       ]),
       S_chart("成员 7 日负荷分布", "聚合口径：按所辖成员求和 · n=8", chartTeamLoad(), 2, { legend: [{ name: "7 日 TL", color: "var(--indigo)" }] }),
       S_cards("风险队列", "聚合视图 → 成员页 → 成员分析（按权限）", A.ATHLETES.filter(a => a.flag !== "正常").map(a => ({
@@ -1041,7 +1065,7 @@
     P["admin/overview"] = P["admin"];
 
     page("admin/athletes", "成员档案", "团队有哪些人、状态如何？", "ADMIN / 成员", [
-      S_table("成员列表", "n=8 · 按所辖成员 · 28 日窗口", ["成员", "组别", "7 日 TL", "ACWR", "完成率", "数据完整度", "状态"], A.ATHLETES.map(a => [
+      S_table("成员列表", "n=" + A.ATHLETES.length + " · 按所辖成员 · 28 日窗口", ["成员", "组别", "7 日 TL", "ACWR", "完成率", "数据完整度", "状态"], A.ATHLETES.map(a => [
         esc(a.name), esc(a.squad), esc(a.load7), a.acwr === null ? "—" : a.acwr.toFixed(2),
         (a.complete * 100).toFixed(0) + "%", (a.quality * 100).toFixed(0) + "%",
         '<span class="badge ' + (a.flag === "正常" ? "ok" : a.flag === "需关注" ? "warn" : "mute") + '">' + esc(a.flag) + '</span>'
@@ -1162,7 +1186,13 @@
     const seg = document.getElementById("platformSeg");
     seg.innerHTML = ["iphone", "ipad", "mac"].map(p => '<button data-act="platform" data-p="' + p + '" class="' + (state.platform === p ? "on" : "") + '">' + ({ iphone: "iPhone", ipad: "iPad", mac: "Mac" })[p] + '</button>').join("");
     document.getElementById("themeBtn").innerHTML = icon(state.theme === "light" ? "moon" : "sun", 16);
-    document.getElementById("roleSel").value = state.role;
+    const rs = document.getElementById("roleSel");
+    rs.value = state.role;
+    // 真实模式下角色来自 memberships，前端不允许自行切换，否则「看到什么」和「服务端放行什么」会错位
+    rs.disabled = !!state.dbLive;
+    rs.title = state.dbLive ? "角色由组织成员关系决定，不可在此切换" : "演示用角色切换";
+    const host = document.getElementById("dbHost");
+    if (host && window.ARC_UI) host.innerHTML = window.ARC_UI.pillHtml();
   }
   function renderShell() {
     document.documentElement.dataset.theme = state.theme;
@@ -1209,7 +1239,9 @@
       '<button class="icon-btn hide-phone" data-act="live-refresh" title="即时刷新" aria-label="即时刷新">↻</button>' +
       '<button class="pill hide-phone" data-act="sheet" data-sheet="scores">对标评分</button>' +
       '<button class="pill hide-phone" data-act="sheet" data-sheet="window">28 日 · ' + (state.params.acwr === "ewma" ? "EWMA" : "rolling") + '</button>' +
-      '<span class="pill demo">DEMO</span>' +
+      (state.dbLive
+        ? '<button class="pill accent" data-act="arc-record">＋ 记录</button><span class="pill live" title="数据来自 Supabase 真实库，行级权限已生效">真实数据</span>'
+        : '<span class="pill demo" title="演示数据，不是真实训练记录">DEMO</span>') +
       '<button class="pill accent" data-act="workspace">' + icon(isAdmin ? "arrow" : "shield", 13) + (isAdmin ? " 返回" : " 工作台") + '</button>' +
       '<button class="pill kbd-hint" data-act="palette">' + icon("search", 13) + '<span class="kbd">⌘K</span></button>';
     document.getElementById("topbar").innerHTML = top;
@@ -1555,6 +1587,13 @@
       openSheet(t, id || el.dataset.date || ""); return;
     }
     if (a === "close") { state.sheet = null; state.palette = false; renderOverlay(); return; }
+    if (a === "arc-record") { if (window.ARC_UI) window.ARC_UI.openRecord(); return; }
+    if (a === "db-panel") { if (window.ARC_UI) window.ARC_UI.openPanel(); return; }
+    if (state.dbLive && (a === "live-toggle" || a === "live-refresh")) {
+      // 真实模式下没有假 SSE：这两个按钮改为「从库里同步一次」
+      if (window.ARC_DB) window.ARC_DB.reload();
+      return;
+    }
     if (a === "live-toggle") { if (window.ARC_LIVE) window.ARC_LIVE.toggleLive(); return; }
     if (a === "live-refresh") { if (window.ARC_LIVE) { window.ARC_LIVE.refresh(); toast("已触发即时刷新 · 骨架加载中，全部卡片同步切版"); } return; }
     if (a === "live-filter") { if (window.ARC_LIVE) window.ARC_LIVE.setFilter(el.dataset.k, el.dataset.v); return; }
@@ -1622,5 +1661,14 @@
     window.ARC_LIVE.start();                    // SSE 仿真：1 Hz 增量推送
   }
   renderAll(); renderOverlay();
+
+  /* ── 接入层需要的几个口子（supabase-client.js / ui-flows.js 调用） ── */
+  window.ARC_RELOAD = function () { renderAll(); renderOverlay(); };
+  window.ARC_SET_ROLE = function (id) {
+    if (!A.ROLES.some(function (r) { return r.id === id; })) return false;
+    state.role = id; return true;
+  };
+  window.ARC_DB_MODE = function (v) { state.dbLive = !!v; };
+  window.ARC_GOTO = navigate;
   window.ARC_DEBUG = { state, P, load, computeLoad, LVP, oneRM, jumpH, navigate, openSheet, LIVE: window.ARC_LIVE };
 })();

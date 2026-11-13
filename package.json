@@ -12,7 +12,15 @@
     "db:0003": "node tools/apply-sql.mjs supabase/migrations/20261114000003_storage_realtime.sql",
     "db:audit": "node tools/audit-db.mjs",
     "fn:check": "cd supabase/functions && deno check export-athlete-data/index.ts delete-athlete-data/index.ts device-oauth-start/index.ts oauth-callback/index.ts",
-    "fn:test": "cd supabase/functions && deno test --allow-env _shared/crypto_test.ts"
+    "fn:test": "cd supabase/functions && deno test --allow-env _shared/crypto_test.ts",
+    "serve": "python3 -m http.server 8799 --bind 127.0.0.1 --directory prototype",
+    "mock:api": "node tools/mock-api.mjs --port 8791",
+    "test:flows": "node tools/test-flows.mjs",
+    "test:api": "node tools/smoke-api.mjs",
+    "db:0005": "node tools/apply-sql.mjs supabase/migrations/20261114000005_auth_bridge.sql",
+    "db:0006": "node tools/apply-sql.mjs supabase/migrations/20261114000006_signup_and_metrics.sql",
+    "accounts": "node tools/accounts.mjs list",
+    "seed:demo": "node tools/seed-demo.mjs"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.2.0",

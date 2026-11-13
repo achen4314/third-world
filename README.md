@@ -4,8 +4,31 @@
 
 ## 快速开始
 
+```bash
+# 1) 起本地服务（不要用 file:// 打开，浏览器会对跨域请求做限制）
+npm run serve            # http://127.0.0.1:8799
+
+# 2) 填 publishable key（唯一的必填项）
+#    Dashboard → Project Settings → API Keys → Publishable key → Copy
+#    写进 prototype/env.js 的 SUPABASE_PUBLISHABLE_KEY，或在页面「数据源」里粘一次
 ```
-直接用浏览器打开 prototype/index.html
+
+没有 key 时页面以**演示数据**运行（可点、可演示，数值不可信，界面有标记）；
+填了 key 就从「演示数据」切换为「真实数据」，注册 / 登录 / 记录训练 / 团队管理全部可用。
+
+演示账号（已在真实库建好，登录后可改密码）：`demo@third.world` / `ArcDemo2026!`
+
+### 自测命令
+
+```bash
+npm run db:audit      # 数据库与权限体系 28 项
+npm run test:flows    # 业务流程 38 项（事务内，跑完回滚）
+npm run test:api      # API 端到端（需要 publishable key）
+npm run mock:api      # 本地假后端，用于在没有 key 时验证前端链路
+```
+
+```
+也可以直接用浏览器打开 prototype/index.html（仅限演示模式）
 ```
 
 零依赖、零构建、无需服务器；也可在 iPhone / iPad / Mac 浏览器打开同一文件。建议在预览面板中先切到 **Mac** 看全貌，再切 **iPad / iPhone** 验证跨端一致性。
