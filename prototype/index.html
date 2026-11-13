@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light" data-workspace="athlete">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>第三世界 · 跨端交互原型</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<!-- 原型控制台：不属于产品界面，仅用于切换 size class / 主题 / 角色 -->
+<div class="console">
+  <div class="console-brand">
+    <div class="console-mark">第</div>
+    <div>
+      <div class="console-title">第三世界 · 跨端交互原型</div>
+      <div class="console-sub">DEMO 原型预览 · 非正式版本 · 不构成训练或医学建议</div>
+    </div>
+    <span class="demo-tag">DEMO 演示数据</span>
+  </div>
+  <div class="console-spacer"></div>
+  <div class="console-group">
+    <span class="console-label">设备</span>
+    <div class="seg" id="platformSeg"></div>
+  </div>
+  <div class="console-group">
+    <span class="console-label">角色</span>
+    <select class="sel" id="roleSel" aria-label="当前角色">
+      <option value="athlete">运动员</option>
+      <option value="coach">教练</option>
+      <option value="head_coach">主教练</option>
+      <option value="medical">队医 / 康复</option>
+      <option value="analyst">科研 / 数据</option>
+      <option value="admin">管理员</option>
+      <option value="observer">只读观察者</option>
+    </select>
+  </div>
+  <div class="console-group">
+    <button class="icon-btn" id="themeBtn" title="切换浅色 / 深色" aria-label="切换外观"></button>
+  </div>
+</div>
+
+<div class="stage" id="stage">
+  <div class="device p-mac" id="device">
+    <div class="device-bar">
+      <div class="traffic"><i></i><i></i><i></i></div>
+      <div class="device-bar-title">第三世界</div>
+      <div style="width:52px"></div>
+    </div>
+    <div class="device-notch"></div>
+    <div class="app platform-mac" id="app">
+      <aside class="sidebar" id="sidebar"></aside>
+      <div class="app-main">
+        <header class="topbar" id="topbar"></header>
+        <nav class="subnav" id="subnav"></nav>
+        <main class="content" id="content"></main>
+      </div>
+      <nav class="tabbar" id="tabbar"></nav>
+      <div class="overlay-host" id="overlay"></div>
+      <div class="toast-layer" id="toasts"></div>
+    </div>
+  </div>
+</div>
+
+<script src="data.js"></script>
+<script src="live.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
