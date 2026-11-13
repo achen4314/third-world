@@ -67,6 +67,10 @@ index.html?platform=iphone&route=analyze/load&theme=dark&role=observer&window=7&
 | `supabase/seed.sql` | 30 条指标口径（22 core + 8 vendor_aligned 隔离） |
 | `supabase/README.md` | Supabase 三种连法、RLS 模型、越权测试、验证状态 |
 | `tools/db-check.cjs` | 可复现的数据库断言脚本（18 项：迁移 / 策略 / 4 类越权 / 缺测不补 0） |
+| **`supabase/apply-all.sql`** | **一次性建库脚本**：0001 + 0002 + seed + 11 项自检，SQL Editor 整段粘贴即可 |
+| `supabase/reset.sql` | 清库脚本（破坏性，带 `set app.allow_drop` 硬保护，默认拒绝执行） |
+| `.env.example` | 环境变量模板（占位值，键名对应 docs/06 C1–C11） |
+| `tools/check-env.mjs` | 环境校验 + 连通性自检（`--probe` 可判断迁移是否已推送） |
 
 ## 仓库与 Supabase 接入
 

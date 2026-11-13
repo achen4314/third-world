@@ -3,14 +3,50 @@
 > 这个目录是**唯一**能让 Supabase 真正「读取」本仓库的部分。
 > Supabase 不会因为仓库连上 GitHub 就获得你的表结构 —— 它只认 `supabase/migrations/` 里的 SQL。
 
+## 0. 已确认的项目信息
+
+| 项 | 值 | 来源 |
+|---|---|---|
+| Project URL | `https://bffuuxdnztowlwbxjlzp.supabase.co` | Dashboard（2026-11-14 已实测可达，未带 key 返回 401 = 正常） |
+| `project-ref` | `bffuuxdnztowlwbxjlzp` | 同上 |
+| 区域 | `us-east-1`（美国东部 · 北弗吉尼亚） | Dashboard 基础设施页 |
+| 套餐 | 免费版（CPU 0% / Disk 13% / 25 MB） | Dashboard |
+| 状态 | 已登录、库为空（未执行过任何迁移） | SQL Editor 截图 |
+
+> ⚠️ **区域在境外这件事有后果，不是配置问题而是合规问题**：`us-east-1` 与「ICP 备案要求境内服务器」直接冲突，且训练类 App 的 HRV / 睡眠 / 月经周期属敏感个人信息，累计 **1 万人**即触发出境标准合同或认证（`docs/06` D3）。开发联调可继续用，**上线前必须迁到境内**，迁移成本随数据量增长，越早越好。
+
 ## 1. 目录内容
 
 | 文件 | 作用 |
 |---|---|
+| **`apply-all.sql`** | **一次性建库脚本**：0001 + 0002 + seed + 自检表，整段粘贴即可执行（推荐入口） |
+| `reset.sql` | 清库脚本（破坏性，带 `set app.allow_drop` 硬保护，默认拒绝执行） |
 | `config.toml` | CLI 本地配置（占位值，无密钥） |
 | `migrations/20261114000001_init.sql` | 17 张表：组织 / 用户 / 队伍 / 运动员 / 设备 / 凭据 / 训练 / 采样 / 指标 / 测试 / 同意 / 审计 |
 | `migrations/20261114000002_rls.sql` | 4 个鉴权函数 + 全部 RLS 策略 |
 | `seed.sql` | 30 条指标口径（22 core + 8 vendor_aligned） |
+
+## 1.5 最快路径：SQL Editor 一次粘贴（不需要装 CLI）
+
+```text
+Dashboard → SQL Editor → New query → 粘贴 apply-all.sql 全文 → Run (⌘↵)
+```
+
+- 整段包在**单事务**里：任一句报错即全部回滚，不会留半成品库。
+- 末尾自带**自检表**（11 项），「状态」列全为 `✓` 即建库成功；出现 `≠ 需排查` 的那一项就是问题所在。
+- **非幂等**：重复执行会报 `type "app_role" already exists`。要重建就先跑 `reset.sql`（需先解除它的保护）。
+
+完成后的预期结果：
+
+| 检查项 | 期望 |
+|---|---|
+| 业务表（含 1 张分区默认子表） | 18 |
+| 已启用 RLS 的表 | 17（分区子表继承父表策略） |
+| RLS 策略 | 37 |
+| 鉴权与触发器函数 | 5 |
+| 指标口径 | 30（22 core + 8 vendor_aligned） |
+| `device_credentials` 策略数 | 0（= 默认拒绝，仅 service_role 可达） |
+| `audit_logs` 可 UPDATE / DELETE | 均为 false（只追加） |
 
 ## 2. 三种连法，按你的目标选
 
@@ -81,9 +117,11 @@ can_write_athlete(athlete_id) = 本人 ∪ coach / team_admin / org_admin / clin
 
 | 项 | 状态 | 影响 |
 |---|---|---|
-| `project-ref` | 待你提供 | 无法 `supabase link` |
-| 套餐（免费 / Pro） | 待确认 | 免费版无分支功能、无备份、无 PITR |
-| 连接串（`DATABASE_URL` / `DIRECT_URL`） | 待提供，走 `.env` | 无法从本机直连与推种子 |
+| `project-ref` | **✅ 已确认** `bffuuxdnztowlwbxjlzp` | 可 `supabase link` |
+| 套餐（免费 / Pro） | **✅ 已确认** 免费版 | 无分支功能、无备份、无 PITR、闲置 7 天暂停 |
+| 前端 key（`sb_publishable_…`） | 待补完整值（截图中被面板截断） | 前端 SDK 无法初始化；不影响建库 |
+| `service_role` / `sb_secret_` key | 待补，只写 `.env.local` | 服务端管理操作不可用；不影响建库 |
+| 连接串（`DATABASE_URL` / `DIRECT_URL`） | 待提供，走 `.env.local` | 无法从本机直连、无法 `db push`；走 SQL Editor 可绕过 |
 | Storage 策略 | **未写** | 视频 / FIT 文件桶需按 `athlete_id` 前缀单独建策略 |
 | Realtime publication | **未开** | 若走 Supabase Realtime 推送，需 `alter publication supabase_realtime add table ...` |
 | Edge Functions | **未写** | 导出、删除、OAuth 回调等异步任务尚未落地 |

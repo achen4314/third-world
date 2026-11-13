@@ -2,7 +2,8 @@
 # 用途：让 `supabase link` / `db push` / `db reset` 在本地跑通
 # 说明：不同 CLI 版本对字段的容忍度不同，出现 unknown-field 警告可忽略或按提示删行。
 
-project_id = "third-world"
+project_id = "bffuuxdnztowlwbxjlzp"   # 已在 Dashboard 确认；CLI link 用 --project-ref 同名
+# 区域：us-east-1（美国东部·北弗吉尼亚）。上线前需迁境内，见 README §0
 
 [api]
 enabled = true
