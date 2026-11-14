@@ -649,7 +649,9 @@
       S_cards("今日三个入口", "不做图表堆叠，只给下一步动作", [
         { icon: "bolt", title: "开始 VBT 采集", sub: "IMU 拉取 / 手动填入 · 来源互斥", value: "进入", route: "lab/vbt" },
         { icon: "plus", title: "新建跳跃测试", sub: "CMJ / SJ / DJ / RSI 10-5", value: "进入", sheet: "newtest" },
-        { icon: "database", title: "设备与缺测", sub: "5 台在用 · 2 天缺测", value: "进入", route: "data/quality" }
+        { icon: "database", title: "设备与缺测", sub: (state.dbLive
+            ? (A.DEVICES.length + " 台在用 · " + (A.SRV || []).filter(d => d.tl === null).length + " 天缺测")
+            : "5 台在用 · 2 天缺测"), value: "进入", route: "data/quality" }
       ], 2),
       S_note("今日页边界", "此页只回答<b>一个问题</b>：今天该练什么。长期趋势进 <b>分析</b>，采集写入进 <b>测试</b>，设备与授权进 <b>数据</b>，团队聚合进 <b>教练工作台</b>。", "info", 1, { label: "查看完整边界表", route: "data/metrics" })
     ], { chips: [dataChip(), '<button class="chip" data-act="sheet" data-sheet="rule" data-id="R-12">规则版本 v1.0</button>'] });
@@ -1918,25 +1920,66 @@
       S_note("实现约束", "权限在<b>服务端 RBAC 中间件</b>强制，前端仅做呈现控制；无权限入口显示<b>锁定态 + 原因</b>，不静默隐藏，避免同一入口在不同端行为不一致。", "warn", 1)
     ], { chips: [dataChip()] });
 
-    page("admin/fleet", "设备与数据管理", "组织级设备资产与数据策略如何？", "ADMIN / 设备群", [
-      S_metrics([{ label: "设备资产", value: "23", unit: "台", delta: "4 个训练工位" },
-        { label: "批量导入任务", value: "4", delta: "1 进行中 · 1 重试 · 2 完成" },
-        { label: "凭据审计", value: "2", unit: "项", delta: "厂商 API 授权未申请" },
-        { label: "保留策略", value: "730", unit: "天", delta: "原始样本只追加不覆盖" }]),
-      S_table("导入任务", "幂等键 = import_id + calc_version", ["任务", "来源", "状态", "重试", "request_id"], [
-        ["imu_20261113_01", "CSV · 200 Hz", "完成", "0", "rq_8f02"],
-        ["fit_watch_batch_07", "FIT × 12", "完成", "0", "rq_7d9c"],
-        ["imu_20261113_02", "JSON · 200 Hz", "进行中", "0", "rq_8f21"],
-        ["tcx_legacy_03", "TCX × 3", "重试中", "1 / 3", "rq_8f1a"]
-      ], 3),
-      S_flow("设备群与批量策略", "与个人数据页的边界", [
-        { t: "设备资产登记", d: "归属组织而非个人；工位、采样率、固件、标定时间" },
-        { t: "批量导入与凭据审计", d: "预签名直传；授权状态、访问记录、轮换周期" },
-        { t: "保留与删除策略", d: "原始样本只追加；删除请求走合规流程并留审计" },
-        { t: "离线回传队列", d: "恢复连接后按 device_id + ts_ms 去重回传" }
-      ], 2),
-      S_note("边界", "<b>data/devices</b> 是本人设备与授权；<b>admin/fleet</b> 是组织级资产、批量任务、凭据与保留策略。个人页不显示组织级配置，管理页不直接编辑个人生理样本。", "info", 1)
-    ], { chips: [dataChip()] });
+    page("admin/fleet", "设备与数据管理", "组织级设备资产与数据策略如何？", "ADMIN / 设备群", (function () {
+      if (!state.dbLive) {
+        return [
+          S_metrics([{ label: "设备资产", value: "23", unit: "台", delta: "4 个训练工位" },
+            { label: "批量导入任务", value: "4", delta: "1 进行中 · 1 重试 · 2 完成" },
+            { label: "凭据审计", value: "2", unit: "项", delta: "厂商 API 授权未申请" },
+            { label: "保留策略", value: "730", unit: "天", delta: "原始样本只追加不覆盖" }]),
+          S_table("导入任务", "幂等键 = import_id + calc_version", ["任务", "来源", "状态", "重试", "request_id"], [
+            ["imu_20261113_01", "CSV · 200 Hz", "完成", "0", "rq_8f02"],
+            ["fit_watch_batch_07", "FIT × 12", "完成", "0", "rq_7d9c"],
+            ["imu_20261113_02", "JSON · 200 Hz", "进行中", "0", "rq_8f21"],
+            ["tcx_legacy_03", "TCX × 3", "重试中", "1 / 3", "rq_8f1a"]
+          ], 3),
+          S_flow("设备群与批量策略", "与个人数据页的边界", [
+            { t: "设备资产登记", d: "归属组织而非个人；工位、采样率、固件、标定时间" },
+            { t: "批量导入与凭据审计", d: "预签名直传；授权状态、访问记录、轮换周期" },
+            { t: "保留与删除策略", d: "原始样本只追加；删除请求走合规流程并留审计" },
+            { t: "离线回传队列", d: "恢复连接后按 device_id + ts_ms 去重回传" }
+          ], 2),
+          S_note("边界", "<b>data/devices</b> 是本人设备与授权；<b>admin/fleet</b> 是组织级资产、批量任务、凭据与保留策略。个人页不显示组织级配置，管理页不直接编辑个人生理样本。", "info", 1)
+        ];
+      }
+
+      // 真实库：只显示库里真的有的东西。没有表的维度直接标「—」并写明缺哪张表，
+      // 不能用「看起来合理」的数字填充——那是把演示当成结果。
+      const D = A.DEVICES || [];
+      const online = D.filter(d => d.status === "online").length;
+      const needAuth = D.filter(d => d.status === "locked").length;
+      const kinds = {};
+      D.forEach(d => { kinds[d.kind] = (kinds[d.kind] || 0) + 1; });
+      const kindText = Object.keys(kinds).map(k => k + " " + kinds[k]).join(" · ");
+      const audN = (A.AUDIT || []).length;
+
+      return [
+        S_metrics([
+          { label: "已登记设备", value: String(D.length), unit: "台", delta: D.length ? (kindText || "—") : "库里 0 台 · 还没配对过", go: "data/devices" },
+          { label: "在线", value: String(online), unit: "台", delta: online ? "最近一次同步可用" : "无在线设备" },
+          { label: "待授权", value: String(needAuth), unit: "台", delta: needAuth ? "厂商 API 未授权" : "无待授权" },
+          { label: "审计记录", value: String(audN), unit: "条", delta: audN ? "组织级操作留痕" : "尚无记录", go: "admin/audit" }
+        ]),
+        D.length
+          ? S_table("设备清单", "组织内可见设备 · 归属组织而非个人", ["名称", "类型", "状态", "序列号", "最后同步"], D.map(d => [
+              esc(d.name), esc(d.kind), esc(d.status === "online" ? "在线" : d.status === "locked" ? "待授权" : d.status === "warn" ? "需重连" : "离线"),
+              esc(d.proto || "—"), esc(d.last || "—")
+            ]), 3)
+          : S_note("设备清单是空的", "库里 <code>devices</code> 表 0 行。<b>不显示演示设备</b>——那会让人以为已经有设备在回传数据。接设备的三种方式见 <b>data/devices</b> 页。", "warn", 3),
+        S_table("还没有后端支撑的三项", "这里不填虚构数字，只说明缺什么", ["维度", "当前状态", "缺的东西"], [
+          ["批量导入任务", '<span class="mini">— 无数据</span>', "没有 <code>import_jobs</code> 表；导入链路要先有预签名直传 + worker"],
+          ["凭据与轮换", '<span class="mini">— 无数据</span>', "<code>devices</code> 只有 serial/status，没有凭证表与轮换周期字段"],
+          ["保留策略", '<span class="mini">— 无数据</span>', "<code>rules.payload</code> 里没有 retention 项；策略一旦要写就得先定版本"]
+        ], 3),
+        S_flow("设备群与批量策略", "与个人数据页的边界", [
+          { t: "设备资产登记", d: "归属组织而非个人；工位、采样率、固件、标定时间" },
+          { t: "批量导入与凭据审计", d: "预签名直传；授权状态、访问记录、轮换周期" },
+          { t: "保留与删除策略", d: "原始样本只追加；删除请求走合规流程并留审计" },
+          { t: "离线回传队列", d: "恢复连接后按 device_id + ts_ms 去重回传" }
+        ], 2),
+        S_note("边界", "<b>data/devices</b> 是本人设备与授权；<b>admin/fleet</b> 是组织级资产、批量任务、凭据与保留策略。个人页不显示组织级配置，管理页不直接编辑个人生理样本。", "info", 1)
+      ];
+    })(), { chips: [dataChip()] });
 
     page("admin/rules", "规则与口径版本", "当前生效的是哪套算法？", "ADMIN / 版本", (function () {
       const LIVE = state.dbLive;
@@ -2129,9 +2172,12 @@
            : '<span class="topbar-title">' + esc(pg.title) + '</span>') +
       '<span class="topbar-spacer"></span>' +
       (isAdmin ? '<button class="pill accent" data-act="sheet" data-sheet="roles">' + icon("shield", 13) + ' ' + roleLabel(state.role) + '</button>' : "") +
-      '<button class="pill hide-phone live-pill" data-act="live-toggle" title="暂停 / 继续实时推流"><span class="live-dot on" data-live-dot></span><span data-live-label>实时 · 1 Hz</span></button>' +
-      '<button class="icon-btn hide-phone" data-act="live-refresh" title="即时刷新" aria-label="即时刷新">↻</button>' +
-      '<button class="pill hide-phone" data-act="sheet" data-sheet="scores">对标评分</button>' +
+      // 真库模式下不摆「实时 · 1 Hz」与「对标评分」：前者是本地仿真推流，后者是厂商评分占位，
+      // 摆在真实数字旁边会被当成真有数据在推、真有厂商评分。
+      (state.dbLive ? "" :
+        '<button class="pill hide-phone live-pill" data-act="live-toggle" title="暂停 / 继续实时推流"><span class="live-dot on" data-live-dot></span><span data-live-label>实时 · 1 Hz</span></button>' +
+        '<button class="icon-btn hide-phone" data-act="live-refresh" title="即时刷新" aria-label="即时刷新">↻</button>' +
+        '<button class="pill hide-phone" data-act="sheet" data-sheet="scores">对标评分</button>') +
       '<button class="pill hide-phone" data-act="sheet" data-sheet="window">28 日 · ' + (state.params.acwr === "ewma" ? "EWMA" : "rolling") + '</button>' +
       (state.dbLive
         ? '<button class="pill accent" data-act="arc-record">＋ 记录</button><span class="pill live" title="数据来自 Supabase 真实库，行级权限已生效">真实数据</span>'
@@ -2169,8 +2215,10 @@
     const actions = (pg.actions || []).map(a => '<button class="btn ' + (a.primary ? "primary" : "") + '" data-act="' + (a.sheet ? "sheet" : "nav") + '" ' +
       (a.sheet ? 'data-sheet="' + a.sheet + '"' + (a.id ? ' data-id="' + esc(a.id) + '"' : "") : 'data-route="' + a.route + '"') + '>' + esc(a.label) + '</button>').join("");
     // docs/04：按界面注入实时控制条 / 对标评分 / 数据融合（不改变既有路由与层级）
+    // 这三块全是模拟占位（1 Hz 假流、厂商评分占位、映射示意）。真库模式下必须关掉：
+    // 「实时 · 1 Hz / 最新更新 18:29:40 / device.sample」配着真实数字出现，会被读成真有数据在推。
     let sections = pg.sections.slice();
-    const LV = window.ARC_LIVE;
+    const LV = state.dbLive ? null : window.ARC_LIVE;
     if (LV) {
       if (sections.some(x => x.type === "chart" || x.type === "heat")) sections.unshift(S_livebar());
       const scoreMap = {

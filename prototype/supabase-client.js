@@ -78,6 +78,11 @@
       String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
   }
   function num(v) { return v === null || v === undefined || v === "" ? null : (isFinite(Number(v)) ? Number(v) : null); }
+  /* PostgREST 的嵌入关系有两种形状：to-one 返回对象，to-many 返回数组。
+   * test_sessions → jump_tests 在真库是 to-one（对象），vbt_sets 是 to-many（数组）。
+   * 直接 forEach 会在真库上抛错，而整次加载会因此回退到演示数据——
+   * 那种回退很隐蔽：页面看起来正常，数字全是假的。 */
+  function asArr(v) { return Array.isArray(v) ? v : (v ? [v] : []); }
   function emit() {
     subs.forEach(function (f) { try { f(S); } catch (e) { /* 单个订阅者失败不影响其它 */ } });
     try { document.dispatchEvent(new CustomEvent("arc:db", { detail: S })); } catch (e) { /* noop */ }
@@ -437,7 +442,7 @@
       // LVP 回归在服务端做（regr_slope / regr_r2），前端只渲染结论，不再自己拟合一遍
       var vbtSession = null, vbtExercise = null;
       (ts || []).forEach(function (s) {
-        (s.vbt_sets || []).forEach(function (v) {
+        asArr(s.vbt_sets).forEach(function (v) {
           if (!vbtSession && v.load_kg !== null && v.mpv !== null) {
             vbtSession = s.id; vbtExercise = v.exercise;
           }
@@ -812,7 +817,7 @@
     var jumps = [], sets = [];
     d.tests.forEach(function (s) {
       if (mine && s.athlete_id !== mine.id) return;
-      (s.jump_tests || []).forEach(function (j) {
+      asArr(s.jump_tests).forEach(function (j) {
         jumps.push({
           date: mdOf(s.performed_at),
           type: (j.jump_type || "cmj").toUpperCase(),
@@ -827,7 +832,7 @@
           cond: s.kind || ""
         });
       });
-      (s.vbt_sets || []).forEach(function (v) {
+      asArr(s.vbt_sets).forEach(function (v) {
         sets.push({
           exercise: v.exercise || "",
           load: v.load_kg === null ? null : Number(v.load_kg),

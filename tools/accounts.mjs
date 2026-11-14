@@ -111,7 +111,14 @@ async function create() {
             set encrypted_password = crypt($2, gen_salt('bf')),
                 email_confirmed_at = coalesce(email_confirmed_at, now()),
                 updated_at = now(),
-                raw_user_meta_data = coalesce(raw_user_meta_data, '{}'::jsonb) || jsonb_build_object('display_name', $3::text)
+                raw_user_meta_data = coalesce(raw_user_meta_data, '{}'::jsonb) || jsonb_build_object('display_name', $3::text),
+                -- GoTrue 用 SELECT * 扫进 Go 结构体，NULL 扫不进 string/bool 会让登录直接 500。
+                -- 这几列在库里没有默认值，必须显式补空串。
+                confirmation_token = coalesce(confirmation_token, ''),
+                recovery_token = coalesce(recovery_token, ''),
+                email_change = coalesce(email_change, ''),
+                email_change_token_new = coalesce(email_change_token_new, ''),
+                is_super_admin = coalesce(is_super_admin, false)
           where id = $1`,
         [uid, password, name]
       );
@@ -119,11 +126,13 @@ async function create() {
     } else {
       const r = await one(
         `insert into auth.users (id, instance_id, aud, role, email, encrypted_password, email_confirmed_at,
-                                 created_at, updated_at, raw_app_meta_data, raw_user_meta_data)
+                                 created_at, updated_at, raw_app_meta_data, raw_user_meta_data,
+                                 confirmation_token, recovery_token, email_change, email_change_token_new, is_super_admin)
          values (gen_random_uuid(),'00000000-0000-0000-0000-000000000000','authenticated','authenticated',
                  $1, crypt($2, gen_salt('bf')), now(), now(), now(),
                  '{"provider":"email","providers":["email"]}'::jsonb,
-                 jsonb_build_object('display_name', $3::text))
+                 jsonb_build_object('display_name', $3::text),
+                 '', '', '', '', false)
          returning id`,
         [email, password, name]
       );

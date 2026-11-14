@@ -264,6 +264,26 @@ const pubNoSelect = pubTables.filter((p) => !polMatrix[p.tablename]?.SELECT);
 check("B 权限", "已发布但无 SELECT 策略的表", pubNoSelect.length === 0,
   pubNoSelect.map((p) => p.tablename).join(",") || 0, 0, `发布 ${pubTables.length} 张`);
 
+/* GoTrue 的登录查询是 SELECT * 扫进 Go 结构体：这几列若是 NULL，
+ * 扫描会失败，而 GoTrue 只把它包成 500「Database error querying schema」——
+ * 从错误信息里完全看不出是数据问题。只能在这里提前拦住。 */
+const authBad = await many(
+  `select email,
+          concat_ws(',',
+            case when confirmation_token is null then 'confirmation_token' end,
+            case when recovery_token is null then 'recovery_token' end,
+            case when email_change is null then 'email_change' end,
+            case when email_change_token_new is null then 'email_change_token_new' end,
+            case when is_super_admin is null then 'is_super_admin' end) cols
+     from auth.users
+    where confirmation_token is null or recovery_token is null
+       or email_change is null or email_change_token_new is null
+       or is_super_admin is null`
+);
+check("B 权限", "auth.users 登录必需列为 NULL", authBad.length === 0,
+  authBad.map((r) => `${r.email}[${r.cols}]`).join(";") || 0, 0,
+  "有 NULL 时该账号密码登录必 500，且报错文案指向不到数据");
+
 /* ══════════════════════════════════════════════════════════════════════════
    C 动态越权（真跑，不推断）
    ══════════════════════════════════════════════════════════════════════════ */
