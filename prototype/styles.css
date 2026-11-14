@@ -832,3 +832,24 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 12px; min-width: 
 .arc-empty { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding: 18px; }
 .arc-empty b { font-size: 14px; }
 .arc-empty span { font-size: 12.5px; color: var(--text-2); line-height: 1.6; }
+
+/* 顶栏在窄窗口下会挤在一起：真实数据徽标 + 设备段 + 角色 + 数据源四项同排。
+   这里让可省的元素先隐藏，而不是让它们互相覆盖。 */
+.console { gap: 12px; }
+.console-brand { min-width: 0; }
+.console-brand > div { min-width: 0; }
+.console-group { flex: 0 0 auto; }
+.console-spacer { flex: 1 1 0; min-width: 8px; }
+#roleSel { max-width: 132px; }
+@media (max-width: 1000px) {
+  .console { gap: 8px; padding: 0 12px; }
+  .console-sub, .demo-tag, .console-label { display: none; }
+  .console-title { font-size: 13px; max-width: 200px; }
+}
+@media (max-width: 760px) {
+  .console-title { max-width: 130px; }
+  #roleSel { max-width: 96px; }
+  .arc-pill span { display: none; }
+}
+.chip.live { color: color-mix(in srgb, var(--green) 78%, var(--text-1)); border-color: color-mix(in srgb, var(--green) 38%, transparent); }
+.console .demo-tag.live { color: color-mix(in srgb, var(--green) 82%, #0a3d24); background: color-mix(in srgb, var(--green) 15%, transparent); border-color: color-mix(in srgb, var(--green) 34%, transparent); }

@@ -31,6 +31,13 @@ function dayOffset(n) {
   d.setDate(d.getDate() - n);
   return d.toISOString().slice(0, 10);
 }
+// 与 dayOffset 相反：n 天后（dayOffset 的负数写法极易读错，这里显式分开）
+function dayAhead(n) {
+  const d = new Date();
+  d.setHours(12, 0, 0, 0);
+  d.setDate(d.getDate() + n);
+  return d.toISOString().slice(0, 10);
+}
 
 const activities = [
   { d: 1, sport: "力量", min: 64, rpe: 7 },
@@ -123,7 +130,72 @@ const SESSIONS = [{
   id: "ts-1", athlete_id: ATH, kind: "jump", performed_at: dayOffset(1) + "T09:10:00+08:00", source: "manual",
   jump_tests: [{ jump_type: "cmj", height_cm: 32.1, contact_ms: null, flight_ms: 512, rsi: null, video_fps: 240, quality: "ok" }],
   vbt_sets: []
+}, {
+  id: "ts-2", athlete_id: ATH, kind: "strength", performed_at: dayOffset(2) + "T18:30:00+08:00", source: "manual",
+  jump_tests: [],
+  vbt_sets: [
+    { exercise: "back_squat", load_kg: 40, reps: 5, mcv: 0.82, mpv: 0.94, pv: 1.12, vl_pct: 12.4, power_w: 368, quality: "ok" },
+    { exercise: "back_squat", load_kg: 70, reps: 5, mcv: 0.60, mpv: 0.72, pv: 0.88, vl_pct: 18.1, power_w: 494, quality: "ok" },
+    { exercise: "back_squat", load_kg: 100, reps: 5, mcv: 0.41, mpv: 0.52, pv: 0.66, vl_pct: 22.7, power_w: 510, quality: "ok" },
+    { exercise: "back_squat", load_kg: 120, reps: 5, mcv: 0.30, mpv: 0.40, pv: 0.51, vl_pct: 26.3, power_w: 471, quality: "ok" }
+  ]
 }];
+
+// 0007 六表 + 相关 RPC（形状必须与真实库一致，否则测的不是真路径）
+const RULE_PAYLOAD = {
+  acwr: { low: 0.8, high: 1.3, danger: 1.5 },
+  monotony_max: 2, strain_max: 6000,
+  readiness: { acwr_w: 0.35, hrv_w: 0.35, sleep_w: 0.3, swc_k: 0.5 },
+  sleep: { target_min: 480, deficit_warn_min: 300 },
+  vbt: { velocity_1rm: 0.3, vl_warn_pct: 20 },
+  jump: { asym_warn_pct: 10 },
+  windows: { acute_days: 7, chronic_days: 28, baseline_days: 7 },
+  data: { min_valid_days: 7, partial_ratio: 0.8 }
+};
+
+const RULES = [{ id: "rule-1", version: "v1.0", name: "默认口径 v1.0", payload: RULE_PAYLOAD, effective_from: "2026-11-01", is_active: true }];
+
+const CYCLES = [{ id: "cyc-1", name: "冬季力量周期", phase: "build", status: "active", start_date: dayOffset(14), end_date: dayAhead(14), goal: "力量基础 + 爆发力维持", team_id: null, athlete_id: ATH }];
+
+const BLOCKS = [
+  { cycle_id: "cyc-1", week_index: 1, start_date: dayOffset(14), end_date: dayOffset(8), focus: "Base 适应", target_load_min: 1500, target_load_max: 1900 },
+  { cycle_id: "cyc-1", week_index: 2, start_date: dayOffset(7), end_date: dayOffset(1), focus: "Build 加量", target_load_min: 1800, target_load_max: 2200 },
+  { cycle_id: "cyc-1", week_index: 3, start_date: dayOffset(0), end_date: dayAhead(6), focus: "Build 强化", target_load_min: 1900, target_load_max: 2300 }
+];
+
+const TEMPLATES = [
+  { id: "tpl-1", title: "下肢力量 · VBT 5×5", purpose: "strength", duration_min: 68, intensity_rpe: 7, level: "intermediate", tags: ["下肢"], notes: null },
+  { id: "tpl-2", title: "恢复日 Z1 + 活动度", purpose: "recovery", duration_min: 40, intensity_rpe: 3, level: "beginner", tags: ["恢复"], notes: null }
+];
+
+const ITEMS = [
+  { template_id: "tpl-1", seq: 1, exercise: "后蹲", sets: 5, reps: 5, load_kg: 80, pct_1rm: null, distance_m: null, duration_s: null, rest_s: 180, vel_min: 0.6 },
+  { template_id: "tpl-1", seq: 2, exercise: "罗马尼亚硬拉", sets: 3, reps: 8, load_kg: 60, pct_1rm: null, distance_m: null, duration_s: null, rest_s: 120, vel_min: null },
+  { template_id: "tpl-2", seq: 1, exercise: "慢跑", sets: 1, reps: null, load_kg: null, pct_1rm: null, distance_m: null, duration_s: 1800, rest_s: null, vel_min: null }
+];
+
+const PROGRESS = {
+  cycle_id: "cyc-1", name: "冬季力量周期", phase: "build", status: "active",
+  start_date: dayOffset(14), end_date: dayAhead(14), athletes: 1,
+  assignments: { planned: 2, done: 0, skipped: 0, adherence: 0 },
+  load: { planned: 5200, actual: 2722, ratio: 0.523, sessions: 11 },
+  weeks: [
+    { week_index: 1, start_date: dayOffset(14), end_date: dayOffset(8), focus: "Base 适应", target_load_min: 1500, target_load_max: 1900, actual_load: 624 },
+    { week_index: 2, start_date: dayOffset(7), end_date: dayOffset(1), focus: "Build 加量", target_load_min: 1800, target_load_max: 2200, actual_load: 2098 },
+    { week_index: 3, start_date: dayOffset(0), end_date: dayAhead(6), focus: "Build 强化", target_load_min: 1900, target_load_max: 2300, actual_load: 0 }
+  ]
+};
+
+const WEEK_PLAN = [
+  { assignment_id: "as-1", scheduled_date: dayOffset(0), status: "planned", title: "下肢力量 · VBT 5×5", purpose: "strength", duration_min: 68, intensity_rpe: 7, template_id: "tpl-1", note: null },
+  { assignment_id: "as-2", scheduled_date: dayAhead(2), status: "planned", title: "恢复日 Z1 + 活动度", purpose: "recovery", duration_min: 40, intensity_rpe: 3, template_id: "tpl-2", note: null }
+];
+
+const VBT_PROFILE = {
+  n: 4, ok: true, slope: -0.00668, intercept: 1.201,
+  r2: 0.9963, load_min: 40, load_max: 120, velocity_1rm: 0.3,
+  load_1rm: 134.9, note: "1RM 为外推值，超出实测负荷上限时仅供参考"
+};
 
 const AUDIT = [
   { occurred_at: new Date().toISOString(), actor_id: UID, action: "activities.insert", target_type: "activities", target_id: "act-0", request_id: "rq_mock1", detail: { op: "INSERT" } },
@@ -183,7 +255,10 @@ const server = http.createServer((req, res) => {
     if (fn === "arc_add_athlete") return json(res, 200, "55555555-5555-5555-5555-555555555555");
     if (fn === "arc_daily_summary") return json(res, 200, SUMMARY);
     if (fn === "arc_team_overview") return json(res, 200, TEAM_OVERVIEW);
-    if (fn === "arc_active_rule") return json(res, 200, { acwr: { low: 0.8, high: 1.3, danger: 1.5 }, monotony_max: 2, strain_max: 6000 });
+    if (fn === "arc_cycle_progress") return json(res, 200, PROGRESS);
+    if (fn === "arc_week_plan") return json(res, 200, WEEK_PLAN);
+    if (fn === "arc_vbt_profile") return json(res, 200, VBT_PROFILE);
+    if (fn === "arc_active_rule") return json(res, 200, RULE_PAYLOAD);
     return json(res, 200, ORG);
   }
 
@@ -202,7 +277,13 @@ const server = http.createServer((req, res) => {
       devices: () => [],
       audit_logs: () => AUDIT.slice(0, limit),
       metric_registry: () => REGISTRY,
-      consents: () => []
+      consents: () => [],
+      plan_cycles: () => CYCLES,
+      plan_blocks: () => BLOCKS,
+      session_templates: () => TEMPLATES,
+      session_items: () => ITEMS,
+      session_assignments: () => WEEK_PLAN.map((w) => ({ id: w.assignment_id, org_id: ORG, athlete_id: ATH, template_id: w.template_id, scheduled_date: w.scheduled_date, status: w.status, note: w.note })),
+      rules: () => RULES
     };
 
     if (req.method === "GET") {

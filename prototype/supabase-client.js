@@ -401,6 +401,58 @@
         return rest("orgs", { select: "id,name,timezone" });
       });
 
+      // ── 计划 / 课库 / 规则：0007 新增的六张表 ─────────────────────────
+      var cyc = (await step("plan_cycles / plan_blocks（周期计划）", async function () {
+        var c = await rest("plan_cycles", {
+          select: "id,name,phase,status,start_date,end_date,goal,team_id,athlete_id",
+          order: "start_date.desc", limit: "20"
+        });
+        var b = await rest("plan_blocks", {
+          select: "cycle_id,week_index,start_date,end_date,focus,target_load_min,target_load_max",
+          order: "week_index"
+        });
+        return { cycles: c || [], blocks: b || [] };
+      })) || { cycles: [], blocks: [] };
+
+      var lib = (await step("session_templates / session_items（课库）", async function () {
+        var t = await rest("session_templates", {
+          select: "id,title,purpose,duration_min,intensity_rpe,level,tags,notes",
+          order: "created_at.desc", limit: "60"
+        });
+        var i = await rest("session_items", {
+          select: "template_id,seq,exercise,sets,reps,load_kg,pct_1rm,distance_m,duration_s,rest_s,vel_min",
+          order: "seq"
+        });
+        return { templates: t || [], items: i || [] };
+      })) || { templates: [], items: [] };
+
+      var rul = await step("rules（规则版本）", function () {
+        return rest("rules", {
+          select: "id,version,name,payload,effective_from,is_active",
+          order: "effective_from.desc", limit: "20"
+        });
+      });
+
+      // LVP 回归在服务端做（regr_slope / regr_r2），前端只渲染结论，不再自己拟合一遍
+      var vbtSession = null, vbtExercise = null;
+      (ts || []).forEach(function (s) {
+        (s.vbt_sets || []).forEach(function (v) {
+          if (!vbtSession && v.load_kg !== null && v.mpv !== null) {
+            vbtSession = s.id; vbtExercise = v.exercise;
+          }
+        });
+      });
+      var vbtProfile = null;
+      if (vbtSession) {
+        // V1RM 阈值优先取生效规则里的配置，没配置才落到 0.3
+        var ruleRow = (rul || []).filter(function (r) { return r.is_active; })[0] || (rul || [])[0];
+        var vbtCfg = (ruleRow && ruleRow.payload && ruleRow.payload.vbt) || {};
+        var velocity0 = vbtCfg.velocity_1rm === undefined ? 0.3 : Number(vbtCfg.velocity_1rm);
+        vbtProfile = await step("RPC · LVP 回归 arc_vbt_profile", function () {
+          return rpc("arc_vbt_profile", { p_session: vbtSession, p_exercise: vbtExercise, p_velocity: velocity0 });
+        });
+      }
+
       S.partial = S.queries.some(function (q) { return !q.ok; });
       S.orgId = (S.memberships[0] && S.memberships[0].org_id) || null;
       S.orgName = (org && org[0] && org[0].name) || "";
@@ -420,10 +472,29 @@
         });
       }
 
+      // 计划执行度 / 本周课表：都走 RPC，前端不自己对比计划与实际
+      var activeCycle = (cyc.cycles || []).filter(function (c) { return c.status === "active"; })[0] ||
+                        (cyc.cycles || [])[0] || null;
+      var progress = null, week = null;
+      if (activeCycle) {
+        progress = await step("RPC · 计划执行度 arc_cycle_progress", function () {
+          return rpc("arc_cycle_progress", { p_cycle: activeCycle.id });
+        });
+      }
+      if (primary) {
+        week = await step("RPC · 本周课表 arc_week_plan", function () {
+          return rpc("arc_week_plan", { p_athlete: primary.id, p_any_date: null });
+        });
+      }
+
       var payload = mapAll({
         uid: uid, athletes: ath || [], activities: act || [], metrics: dm || [],
         tests: ts || [], devices: dev || [], audit: aud || [], registry: reg || [],
-        summary: summary, team: team
+        summary: summary, team: team,
+        cycles: cyc.cycles || [], blocks: cyc.blocks || [],
+        templates: lib.templates || [], items: lib.items || [],
+        rules: rul || [], progress: progress, week: week,
+        vbtProfile: vbtProfile, vbtSession: vbtSession, vbtExercise: vbtExercise
       });
       apply(payload);
 
@@ -477,6 +548,121 @@
     // 服务端聚合结果：整块透传，前端只读不算
     arrays.SUMMARY = d.summary || null;
     arrays.TEAM = d.team || null;
+
+    /* ── 计划 / 课库 / 规则（0007 六表）：有就覆盖，没有就给空数组 ──────
+     * 这里必须无条件赋值：留空不写会让演示常量顶上来，页面就会把假数据
+     * 当成真数据展示，这是最坏的一种错。 */
+    var PURPOSE = {
+      strength: "力量", power: "爆发力", speed: "速度", conditioning: "体能",
+      recovery: "恢复", skill: "技术", test: "测试", other: "其他"
+    };
+    var PHASE = { recovery: "Recovery", base: "Base", build: "Build", peak: "Peak", taper: "Taper" };
+    var WEEK_ST = { planned: "待上", done: "已完成", skipped: "已跳过" };
+
+    var activeRule = (d.rules || []).filter(function (r) { return r.is_active; })[0] ||
+                     (d.rules || [])[0] || null;
+    arrays.RULE_PACK = activeRule ? {
+      id: activeRule.id,
+      version: activeRule.version,
+      name: activeRule.name,
+      effective_from: activeRule.effective_from ? mdOf(activeRule.effective_from) : "—",
+      payload: activeRule.payload || {},
+      versions: (d.rules || []).length
+    } : null;
+
+    var ac = (d.cycles || []).filter(function (c) { return c.status === "active"; })[0] ||
+             (d.cycles || [])[0] || null;
+    arrays.CYCLE_META = ac ? {
+      id: ac.id, name: ac.name, goal: ac.goal || "",
+      phase: PHASE[ac.phase] || ac.phase, status: ac.status,
+      start: mdOf(ac.start_date), end: mdOf(ac.end_date),
+      progress: d.progress || null
+    } : null;
+
+    var actualByWeek = {};
+    ((d.progress && d.progress.weeks) || []).forEach(function (w) { actualByWeek[w.week_index] = w; });
+
+    var myBlocks = ac ? (d.blocks || []).filter(function (b) { return b.cycle_id === ac.id; }) : [];
+    arrays.PLAN_BLOCKS = myBlocks.map(function (b) {
+      var w = actualByWeek[b.week_index] || {};
+      var nmax = b.target_load_max === null ? null : Number(b.target_load_max);
+      var nmin = b.target_load_min === null ? null : Number(b.target_load_min);
+      var target = nmax === null ? (nmin === null ? null : Math.round(nmin)) : Math.round(nmax);
+      var actual = w.actual_load === undefined || w.actual_load === null ? null : Number(w.actual_load);
+      var inRange = actual !== null && (nmin === null || actual >= nmin) && (nmax === null || actual <= nmax);
+      var end = new Date(String(b.end_date).slice(0, 10) + "T00:00:00");
+      var endFuture = !isNaN(end.getTime()) && end >= new Date(new Date().toDateString());
+      // 本周还没结束且一条都没记录：是「进行中」，不是「偏离区间」——两者含义差很远
+      var notStarted = actual === null || (actual === 0 && endFuture);
+      return {
+        phase: (PHASE[ac.phase] || ac.phase) + " W" + b.week_index,
+        range: mdOf(b.start_date) + " – " + mdOf(b.end_date),
+        startRaw: String(b.start_date).slice(0, 10),
+        endRaw: String(b.end_date).slice(0, 10),
+        start: mdOf(b.start_date),
+        target: target === null ? "—" : target,
+        targetNum: target,
+        targetDay: target === null ? null : Math.round(target / 7),
+        actual: actual === null ? null : Math.round(actual),
+        focus: b.focus || "",
+        status: notStarted ? (endFuture ? "进行中" : "未开始")
+                          : (inRange ? "达标" : "偏离区间"),
+        tone: notStarted ? (endFuture ? "active" : "plan") : (inRange ? "done" : "warn")
+      };
+    });
+
+    arrays.WEEK_PLAN = (d.week || []).map(function (r) {
+      return {
+        date: mdOf(r.scheduled_date),
+        title: r.title || "未命名课程",
+        purpose: PURPOSE[r.purpose] || r.purpose || "其他",
+        dur: r.duration_min ? r.duration_min + " min" : "—",
+        rpe: r.intensity_rpe === null ? null : r.intensity_rpe,
+        note: r.note || "",
+        status: WEEK_ST[r.status] || r.status
+      };
+    });
+
+    arrays.LIBRARY = (d.templates || []).map(function (t) {
+      var items = (d.items || [])
+        .filter(function (i) { return i.template_id === t.id; })
+        .sort(function (a, b) { return Number(a.seq) - Number(b.seq); })
+        .map(function (i) {
+          return {
+            seq: i.seq, exercise: i.exercise,
+            sets: i.sets, reps: i.reps,
+            load: i.load_kg === null ? null : Number(i.load_kg),
+            pct: i.pct_1rm === null ? null : Number(i.pct_1rm),
+            dist: i.distance_m === null ? null : Number(i.distance_m),
+            dur: i.duration_s === null ? null : Number(i.duration_s),
+            rest: i.rest_s === null ? null : Number(i.rest_s),
+            velMin: i.vel_min === null ? null : Number(i.vel_min)
+          };
+        });
+      var summary = items.map(function (i) {
+        if (i.load !== null) return i.sets + "×" + i.reps + " @ " + i.load + "kg";
+        if (i.pct !== null) return i.sets + "×" + i.reps + " @ " + i.pct + "%1RM";
+        if (i.dist !== null) return i.sets + "×" + i.dist + "m";
+        if (i.dur !== null) return i.sets + "×" + Math.round(i.dur / 60) + "min";
+        return i.exercise;
+      }).slice(0, 3).join(" · ");
+      return {
+        id: t.id,
+        title: t.title,
+        purpose: PURPOSE[t.purpose] || t.purpose || "其他",
+        dur: t.duration_min ? t.duration_min + " min" : "—",
+        rpe: t.intensity_rpe,
+        level: t.level || "",
+        tags: t.tags || [],
+        items: items,
+        count: items.length,
+        summary: summary || "未填写条目"
+      };
+    });
+
+    // 测试：无记录就给空数组，不留演示条目冒充真实测量
+    arrays.JUMPS = [];
+    arrays.VBT_SETS = [];
 
     // TL / HRV / 睡眠：最近 28 天
     arrays.DATES = days.map(mdOf);
@@ -558,16 +744,21 @@
       (s.jump_tests || []).forEach(function (j) {
         jumps.push({
           date: mdOf(s.performed_at),
-          type: j.jump_type || "CMJ",
+          type: (j.jump_type || "cmj").toUpperCase(),
           tf: j.flight_ms === null ? null : Number(j.flight_ms) / 1000,
           tc: j.contact_ms === null ? null : Number(j.contact_ms) / 1000,
+          // 服务端算好的高度与 RSI 优先用，前端只在缺失时才按公式补算
+          height: j.height_cm === null ? null : Number(j.height_cm),
+          rsi: j.rsi === null ? null : Number(j.rsi),
           method: s.source || "manual",
           fps: j.video_fps === null ? null : Number(j.video_fps),
+          quality: j.quality || "ok",
           cond: s.kind || ""
         });
       });
       (s.vbt_sets || []).forEach(function (v) {
         sets.push({
+          exercise: v.exercise || "",
           load: v.load_kg === null ? null : Number(v.load_kg),
           mpv: v.mpv === null ? null : Number(v.mpv),
           mcv: v.mcv === null ? null : Number(v.mcv),
@@ -577,8 +768,10 @@
         });
       });
     });
-    if (jumps.length) arrays.JUMPS = jumps;
-    if (sets.length) arrays.VBT_SETS = sets;
+    arrays.JUMPS = jumps;
+    arrays.VBT_SETS = sets;
+    arrays.VBT_PROFILE = d.vbtProfile || null;
+    arrays.VBT_SESSION = d.vbtSession ? { id: d.vbtSession, exercise: d.vbtExercise } : null;
 
     // 设备
     var KIND = {

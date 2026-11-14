@@ -216,6 +216,31 @@ try {
     );
   }
 
+  // 把每条训练都挂到「当天已排课」上，并让 planned_load 等于当天实际负荷。
+  // 不这样做，执行度会算出 8.9 倍这种荒唐比值——那是数据不自洽，不是教练计划有问题。
+  const dayRows = (await c.query(
+    `select (s.started_at at time zone 'Asia/Shanghai')::date::text d,
+            sum(s.training_load)::numeric tl,
+            min(s.id::text)::text aid
+       from public.activities s
+      where s.athlete_id = $1
+      group by 1 order by 1`, [me.athlete_id])).rows;
+  for (const r of dayRows) {
+    const has = await one(
+      `select id from public.session_assignments where athlete_id = $1 and scheduled_date = $2 limit 1`,
+      [me.athlete_id, r.d]);
+    if (has) {
+      await c.query(
+        `update public.session_assignments set planned_load = $2, status = 'done', activity_id = coalesce(activity_id, $3)
+          where id = $1`, [has.id, r.tl, r.aid]);
+      continue;
+    }
+    await c.query(
+      `insert into public.session_assignments (org_id, athlete_id, template_id, scheduled_date, status, activity_id, planned_load, created_by)
+       values ($1,$2,$3,$4,'done',$5,$6,$7)`,
+      [me.org_id, me.athlete_id, tplIds[0], r.d, r.aid, r.tl, me.id]);
+  }
+
   // 触发一次全量重算（正常情况下由 activities 触发器自动完成，这里确保历史日期都算到）
   await c.query("select public.arc_recompute_metrics($1, current_date)", [me.athlete_id]);
   await c.query("select public.arc_recompute_recovery($1, current_date)", [me.athlete_id]);
