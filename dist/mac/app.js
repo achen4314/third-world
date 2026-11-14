@@ -2857,7 +2857,8 @@
       '<button type="button" class="ph-x" aria-label="关闭提示">✕</button>';
     document.body.appendChild(el);
     el.querySelector("[data-goto]").addEventListener("click", function () {
-      location.href = "../" + actual + "/";
+      // 带上当前查询串：预览通道的访问参数丢了就打不开对端版本
+      location.href = "../" + actual + "/" + (location.search || "");
     });
     el.querySelector(".ph-x").addEventListener("click", function () { el.remove(); });
     // 只是提示，不该长期占位：9 秒后自行退场，用户随时可提前关闭

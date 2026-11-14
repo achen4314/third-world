@@ -1,16 +1,16 @@
-/* 第三世界 · Mac 版 离线缓存 · 0d87474e */
-const CACHE = "arc-mac-0d87474e";
+/* 第三世界 · Mac 版 离线缓存 · 952f5cb6 */
+const CACHE = "arc-mac-952f5cb6";
 const ASSETS = [
   "./",
   "./index.html",
   "./manifest.webmanifest",
-  "./env.js?v=0d87474e",
-  "./data.js?v=0d87474e",
-  "./live.js?v=0d87474e",
-  "./app.js?v=0d87474e",
-  "./supabase-client.js?v=0d87474e",
-  "./ui-flows.js?v=0d87474e",
-  "./styles.css?v=0d87474e",
+  "./env.js?v=952f5cb6",
+  "./data.js?v=952f5cb6",
+  "./live.js?v=952f5cb6",
+  "./app.js?v=952f5cb6",
+  "./supabase-client.js?v=952f5cb6",
+  "./ui-flows.js?v=952f5cb6",
+  "./styles.css?v=952f5cb6",
   "./icons/apple-touch-icon.png",
   "./icons/icon-192.png",
   "./icons/icon-512.png"

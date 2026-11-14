@@ -49,7 +49,7 @@
     <div class="mark">第</div>
     <div>
       <h1>第三世界</h1>
-      <div class="sub">训练负荷与就绪度 · 版本 0d87474e</div>
+      <div class="sub">训练负荷与就绪度 · 版本 952f5cb6</div>
     </div>
   </div>
 
@@ -103,6 +103,8 @@
       : window.matchMedia("(max-width: 1100px)").matches ? "ipad" : "mac");
   var NAME = { iphone: "iPhone", ipad: "iPad", mac: "Mac" };
   var manual = new URLSearchParams(location.search).get("choose") === "1";
+  // 访问参数（例如预览通道的 sharecode）必须跟着跳转带走，否则下一跳会被挡在门外
+  var keep = location.search || "";
 
   var hint = document.getElementById("hint");
   hint.innerHTML = "检测到本机为 <b>" + NAME[device] + "</b>，已为你标记对应版本。";
@@ -110,14 +112,20 @@
   var rec = document.querySelector('[data-target="' + device + '"]');
   if (rec) rec.classList.add("rec");
 
+  if (keep) {
+    document.querySelectorAll("a.card").forEach(function (a) {
+      a.href = a.getAttribute("href") + keep;
+    });
+  }
+
   if (!manual) {
     // 只在直接访问根路径时自动跳转；带 ?choose=1 时保留选择页，便于人工核对
-    setTimeout(function () { location.replace("./" + device + "/"); }, 650);
+    setTimeout(function () { location.replace("./" + device + "/" + keep); }, 650);
   }
 
   document.getElementById("again").addEventListener("click", function (e) {
     e.preventDefault();
-    location.href = "./" + device + "/";
+    location.href = "./" + device + "/" + keep;
   });
 
   document.querySelectorAll(".card").forEach(function (a) {
