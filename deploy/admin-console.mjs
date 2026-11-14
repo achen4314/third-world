@@ -19,6 +19,7 @@
  */
 
 import http from "node:http";
+import https from "node:https";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
@@ -112,10 +113,41 @@ async function status() {
       const l = stdout.trim().split("\n").pop().split(/\s+/);
       return { totalGB: +(l[1] / 1048576).toFixed(2), usedGB: +(l[2] / 1048576).toFixed(2), usedPct: l[4] };
     }),
-    probe("nginx 配置", async () => (await run("nginx", ["-t"], { timeout: 5000 })).stderr.trim().split("\n").pop() || "ok"),
+    // 门面可能是 caddy（本机默认）或主机 nginx；不存在就如实报「未安装」，不当成故障
+    probe("门面配置", async () => {
+      const which = {};
+      try {
+        await run("caddy", ["validate", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"], { timeout: 8000 });
+        which.caddy = "valid";
+      } catch (e) {
+        const m = String(e.stdout || "") + String(e.stderr || "") + String(e.message || "");
+        which.caddy = /no such file|not found|ENOENT/i.test(m) ? "未安装" : m.trim().split("\n").pop().slice(0, 120);
+      }
+      try { await run("nginx", ["-t"], { timeout: 5000 }); which.nginx = "valid"; }
+      catch (e) { which.nginx = /not found|ENOENT/i.test(String(e.message || "")) ? "未安装" : "有错"; }
+      return which;
+    }),
     probe("应用服务", async () => (await run("systemctl", ["is-active", "arc-admin"], { timeout: 5000 })).stdout.trim()),
-    probe("nginx 服务", async () => (await run("systemctl", ["is-active", "nginx"], { timeout: 5000 })).stdout.trim()),
+    probe("门面服务", async () => {
+      const out = {};
+      for (const u of ["caddy", "nginx"]) {
+        try { out[u] = (await run("systemctl", ["is-active", u], { timeout: 4000 })).stdout.trim(); }
+        catch (e) { out[u] = String(e.stdout || "inactive").trim() || "inactive"; }
+      }
+      return out;
+    }),
     probe("域名解析 " + c.domain, async () => ({ a: await dns.resolve4(c.domain).catch(() => []) })),
+    probe("本机 HTTPS 门面", async () => new Promise((resolve) => {
+      // 用 Host 头直接打本机 443，绕过 DNS/公网，验证证书与反代链路是否通
+      const req = https.request({
+        host: "127.0.0.1", port: 443, path: "/admin/", method: "GET",
+        servername: c.domain, rejectUnauthorized: false,
+        headers: { host: c.domain }, timeout: 8000
+      }, (r) => { r.resume(); resolve({ http: r.statusCode }); });
+      req.on("timeout", () => { req.destroy(); resolve({ http: 0, note: "超时" }); });
+      req.on("error", (e) => resolve({ http: 0, note: String(e.code || e.message).slice(0, 60) }));
+      req.end();
+    })),
     probe("Supabase Auth", async () => {
       const r = await fetch(String(c.supabaseUrl).replace(/\/+$/, "") + "/auth/v1/settings", {
         headers: { apikey: c.publishableKey || "invalid" }, signal: AbortSignal.timeout(6000)
@@ -127,10 +159,14 @@ async function status() {
 }
 
 const ACTIONS = {
-  "healthcheck": ["systemctl", ["is-active", "arc-admin", "nginx"]],
+  "healthcheck": ["systemctl", ["is-active", "arc-admin", "caddy"]],
+  "proxy-test": ["caddy", ["validate", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]],
+  "reload-proxy": ["systemctl", ["reload-or-restart", "caddy"]],
   "reload-nginx": ["systemctl", ["reload", "nginx"]],
   "restart-app": ["systemctl", ["restart", "arc-admin"]],
   "nginx-test": ["nginx", ["-t"]],
+  "cert-info": ["sh", ["-c", "ls -l /var/lib/caddy/.local/share/caddy/certificates 2>/dev/null | tail -5; echo '---'; journalctl -u caddy -n 15 --no-pager | grep -iE 'certificate|tls|error' | tail -8"]],
+  "ports": ["sh", ["-c", "ss -lntp 2>/dev/null | grep -E ':(80|443|8080|8787)\\b'"]],
   "tail-logs": ["journalctl", ["-u", "arc-admin", "-n", "60", "--no-pager"]]
 };
 

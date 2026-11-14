@@ -1,0 +1,32 @@
+# 第三世界 · 纯 HTTP 门面（过渡用：域名没解析 / 备案没下来 / 只按 IP 先验收）
+#
+# 用途：TLS 还没就绪时，先用 http://<公网IP>:8080/ 把功能跑通，
+#       等 DNS + 证书就绪再切 Caddyfile（443）。
+# 注意：不用 80（那是 Dify 的），也不改任何现有配置。
+
+:8080 {
+	encode gzip
+
+	@console path /admin /admin/*
+	handle @console {
+		reverse_proxy 127.0.0.1:8787
+	}
+	@api path /api/*
+	handle @api {
+		reverse_proxy 127.0.0.1:8787
+	}
+
+	handle {
+		root * /opt/arc-training/prototype
+		try_files {path} {path}/ /index.html
+		file_server
+	}
+
+	@env path /env.js
+	header @env Cache-Control "no-store"
+
+	header {
+		X-Content-Type-Options nosniff
+		-Server
+	}
+}

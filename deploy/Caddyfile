@@ -1,0 +1,56 @@
+# 第三世界 · Caddy 门面（443 独占；完全不碰 80 上现有的 Dify）
+#
+# 为什么用 Caddy 而不是往主机 nginx 里加 vhost：
+#   这台机器 80 端口由 Docker 里的 Dify nginx 持有，主机上没有 nginx 在听 80，
+#   加 /etc/nginx/conf.d/*.conf 不会生效，还可能和 Dify 抢 80。
+#   Caddy 只绑 443，证书自动申请、自动续；80 被占时它会自动改用 TLS-ALPN-01 验证，
+#   不需要 80 的 HTTP 验证通道。
+#
+# 安装：cp Caddyfile /etc/caddy/Caddyfile && systemctl reload caddy
+
+{
+	email admin@__DOMAIN__
+	# 80 被 Dify 占用，别去抢；只在 443 上工作
+	servers {
+		protocols h1 h2
+	}
+}
+
+__DOMAIN__, www.__DOMAIN__ {
+	encode gzip zstd
+
+	# 后台控制台：只走回环，由这里反代出去
+	@console path /admin /admin/*
+	handle @console {
+		reverse_proxy 127.0.0.1:8787
+	}
+	@api path /api/*
+	handle @api {
+		reverse_proxy 127.0.0.1:8787
+	}
+
+	# 静态站
+	handle {
+		root * /opt/arc-training/prototype
+		try_files {path} {path}/ /index.html
+		file_server
+	}
+
+	# env.js 每次都要新鲜（后台改配置后立刻生效）
+	@env path /env.js
+	header @env Cache-Control "no-store"
+
+	header {
+		X-Content-Type-Options nosniff
+		X-Frame-Options SAMEORIGIN
+		Referrer-Policy strict-origin-when-cross-origin
+		-Server
+	}
+
+	log {
+		output file /var/log/caddy/arc-access.log {
+			roll_size 20MiB
+			roll_keep 5
+		}
+	}
+}

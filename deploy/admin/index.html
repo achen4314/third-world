@@ -71,8 +71,10 @@
       <h2>日常维护 <span class="pill">固定命令白名单，不接收任意命令</span></h2>
       <div class="row">
         <button data-act="healthcheck">健康检查</button>
-        <button data-act="nginx-test">校验 nginx 配置</button>
-        <button data-act="reload-nginx">重载 nginx</button>
+        <button data-act="proxy-test">校验门面配置</button>
+        <button data-act="reload-proxy">重载门面</button>
+        <button data-act="ports">查看端口占用</button>
+        <button data-act="cert-info">证书状态</button>
         <button data-act="restart-app">重启管理服务</button>
         <button data-act="tail-logs">查看最近日志</button>
       </div>
@@ -102,8 +104,12 @@
       }).join("");
       var dnsCheck = d.checks.filter(function(c){ return c.label.indexOf("域名解析") === 0; })[0];
       var sb = d.checks.filter(function(c){ return c.label === "Supabase Auth"; })[0];
+      var tls = d.checks.filter(function(c){ return c.label === "本机 HTTPS 门面"; })[0];
+      var fe = d.checks.filter(function(c){ return c.label === "门面服务"; })[0];
       var w = [];
       if (dnsCheck && dnsCheck.ok && (!dnsCheck.value.a || !dnsCheck.value.a.length)) w.push("域名还没有 A 记录，公网尚无法访问。");
+      if (tls && (!tls.ok || tls.value.http !== 200)) w.push("本机 443 打不通（" + JSON.stringify(tls.value) + "）：证书未签发或门面没运行。");
+      if (fe && fe.ok && fe.value && fe.value.caddy && fe.value.caddy !== "active") w.push("Caddy 状态是 " + fe.value.caddy + "，门面没起来。");
       if (sb && (!sb.ok || sb.value.http !== 200)) w.push("Supabase Auth 未通过 200 校验，检查 key 或网络。");
       if (!d.config.hasKey) w.push("还没配置 publishable key，前端只会显示演示数据。");
       $("warn").innerHTML = w.length ? w.map(function(x){ return "⚠ " + esc(x); }).join("<br>") : "✓ 配置与连通性检查通过。";
