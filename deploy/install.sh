@@ -61,6 +61,12 @@ NODE_BIN=$(command -v node)
 NODE_MAJOR=$("$NODE_BIN" -p 'process.versions.node.split(".")[0]')
 [[ "$NODE_MAJOR" -ge 18 ]] || die "node 版本过低（$("$NODE_BIN" -v)），需要 ≥18"
 
+# 这台机器还跑着 Dify（实测内存 2.67/4.0 GiB），别把内存吃满把人家的服务 OOM 掉
+MEM_AVAIL_MB=$(awk '/MemAvailable/{printf "%d", $2/1024}' /proc/meminfo 2>/dev/null || echo 9999)
+if [[ "$MEM_AVAIL_MB" -lt 300 ]]; then
+  warn "可用内存只有 ${MEM_AVAIL_MB}MB（Dify 占了不少）：装完请盯一下 free -m，必要时给 Caddy 加 memory 限制"
+fi
+
 echo "── 1/7 目录与权限 ─────────────────────────────────"
 install -d -m 755 "$ROOT/deploy/runtime"
 install -d -m 750 /etc/arc-training
@@ -115,6 +121,13 @@ if ! command -v caddy >/dev/null; then
   apt-get install -y -qq caddy >/dev/null || die "caddy 安装失败（检查 universe 源或出网）"
 fi
 install -d -m 755 /var/log/caddy
+# 不覆盖别人家的配置：如果这台机器上已有 Caddyfile 且不是我们生成的，先备份再写
+CADDY_CONF=/etc/caddy/Caddyfile
+if [[ -f "$CADDY_CONF" ]] && ! grep -q 'ARC-MANAGED' "$CADDY_CONF"; then
+  BAK="$CADDY_CONF.bak.$(date +%s)"
+  cp -a "$CADDY_CONF" "$BAK"
+  warn "发现已有 Caddyfile（非本项目生成），已备份到 $BAK —— 若它服务着别的东西，请先确认再继续"
+fi
 if [[ "$MODE" == "https" ]]; then
   sed "s/__DOMAIN__/$DOMAIN/g" "$ROOT/deploy/Caddyfile" > /etc/caddy/Caddyfile
   chown -R caddy:caddy /var/log/caddy 2>/dev/null || true

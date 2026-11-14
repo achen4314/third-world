@@ -1,3 +1,4 @@
+# ARC-MANAGED —— 本文件由 deploy/install.sh 生成，改动前请先看 docs/12
 # 第三世界 · Caddy 门面（443 独占；完全不碰 80 上现有的 Dify）
 #
 # 为什么用 Caddy 而不是往主机 nginx 里加 vhost：

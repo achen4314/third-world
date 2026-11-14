@@ -1,3 +1,4 @@
+# ARC-MANAGED —— 本文件由 deploy/install.sh 生成，改动前请先看 docs/12
 # 第三世界 · 纯 HTTP 门面（过渡用：域名没解析 / 备案没下来 / 只按 IP 先验收）
 #
 # 用途：TLS 还没就绪时，先用 http://<公网IP>:8080/ 把功能跑通，
