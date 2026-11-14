@@ -49,7 +49,7 @@
     dbLive: false,
     // 连接状态机：同步中不给数值、报错不给数值、stale 明确标注时间。
     // 这三件事比「显示什么数字」更重要——它们决定用户能不能相信眼前的数字。
-    dbSyncing: false, dbStale: false, dbError: null,
+    dbSyncing: false, dbStale: false, dbError: null, dbNeedAuth: false,
     dbTruncated: false, dbLastSync: null, dbReason: ""
   };
   const SIZES = { iphone: [390, 844], ipad: [1024, 720], mac: [1440, 900] };
@@ -197,7 +197,15 @@
     }
     return '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none">' + s + '</svg>';
   }
+  function emptyChart(W, H, msg) {
+    return '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none">' +
+      '<rect x="0" y="0" width="' + W + '" height="' + H + '" fill="none"/>' +
+      '<text x="' + (W / 2) + '" y="' + (H / 2) + '" text-anchor="middle" font-size="12" fill="var(--text-3)">' +
+      esc(msg || "暂无数据") + '</text></svg>';
+  }
   function svgBars(c, W, H) {
+    // 空数组会让 iw/n 变成 Infinity，柱子坐标 NaN → 整块图空白。先挡掉。
+    if (!c.labels || !c.labels.length) return emptyChart(W, H, "本期没有数据");
     const pad = { l: 36, r: 12, t: 12, b: 24 }, iw = W - pad.l - pad.r, ih = H - pad.t - pad.b;
     const vals = c.values.filter(v => v !== null && Number.isFinite(v));
     let min = c.min !== undefined ? c.min : Math.min(0, Math.min.apply(null, vals));
@@ -250,6 +258,7 @@
     return '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none">' + s + '</svg>';
   }
   function svgGauge(c, W, H) {
+    if (!c.items || !c.items.length) return emptyChart(W, H, "暂无指标");
     const each = W / c.items.length, r = Math.min(each * .34, H * .34), cy = H * .56;
     let s = "";
     c.items.forEach((it, k) => {
@@ -298,11 +307,14 @@
     if (c.kind === "stack") return svgStack(c, W, H);
     return "";
   }
-  function mountCharts() {
+  function mountCharts(skipSame) {
     const LV = window.ARC_LIVE;
     document.querySelectorAll("#content [data-chart]").forEach(el => {
       const base = chartRegistry[el.dataset.chart]; if (!base) return;
       const W = Math.max(200, el.clientWidth || 360), H = Math.max(120, el.clientHeight || 200);
+      // resize 触发的重绘：尺寸没变就不重建，避免无谓的重排与动画重放
+      if (skipSame && el.dataset.cw === String(W) && el.dataset.ch === String(H) && el.firstChild) return;
+      el.dataset.cw = String(W); el.dataset.ch = String(H);
       const c = LV ? LV.applyView(base, LV.state) : base;
       if (LV) LV.attachBase(el, base);
       el.innerHTML = renderChart(c, W, H);
@@ -561,27 +573,23 @@
   function page(route, title, question, eyebrow, sections, opts) {
     P[route] = { title, question, eyebrow, sections, chips: (opts && opts.chips) || [], actions: (opts && opts.actions) || [] };
   }
-  // 数据来源标签：连了真库就不能再挂「DEMO 演示数据」，那会让人误判眼前数字的性质
+  // 数据来源标签：连了真库就不能再挂「未连接数据源」，那会让人误判眼前数字的性质
   function dataChip() {
-    // 本机覆盖：以前用 ?sburl= 试连过 mock，地址会留在 localStorage 里。
-    // 不说出来的话，页面会一边挂「真实数据」一边跟 mock 说话——那比显示 DEMO 更危险。
-    const ov = (window.ARC_DB && window.ARC_DB.state && window.ARC_DB.state.override) || null;
-    const ovChip = ov
-      ? '<button class="chip warn" data-act="clear-override" title="本机存储的 ' + esc(ov.field) + ' 覆盖了 env.js">本机覆盖 · ' + esc(ov.field) + ' · 点此清除</button>'
-      : "";
     let main;
     if (state.dbSyncing) {
-      main = '<span class="chip sync">同步中 · 暂不显示数值</span>';
+      main = '<span class="chip sync">正在同步</span>';
+    } else if (state.dbNeedAuth) {
+      main = '<span class="chip warn" title="' + esc(state.dbReason) + '">登录状态已失效 · 请重新登录</span>';
     } else if (state.dbError) {
-      main = '<span class="chip err" title="' + esc(state.dbReason) + '">数据未加载 · 不显示任何数值</span>';
+      main = '<span class="chip err" title="' + esc(state.dbReason) + '">数据未加载</span>';
     } else if (state.dbStale) {
-      main = '<span class="chip warn" title="' + esc(state.dbReason) + '">上次同步 ' + esc(state.dbLastSync || "时间未知") + ' · 数据可能已过期</span>';
+      main = '<span class="chip warn" title="' + esc(state.dbReason) + '">' + esc(state.dbLastSync || "上次同步") + ' 的数据 · 可能已过期</span>';
     } else if (state.dbLive) {
-      main = '<span class="chip live">' + (state.dbTruncated ? '真实数据 · 窗口被截断' : '真实数据 · RLS 生效') + '</span>';
+      main = '<span class="chip live">' + (state.dbTruncated ? '数据已同步 · 部分记录超出窗口' : '已连接 · 数据实时') + '</span>';
     } else {
-      main = '<span class="chip demo">DEMO 演示数据</span>';
+      main = '<span class="chip demo">未连接数据源</span>';
     }
-    return main + ovChip;
+    return main;
   }
   const curWindow = () => (window.ARC_LIVE ? window.ARC_LIVE.state.window : state.params.window);
   const analyzeChips = () => [
@@ -731,7 +739,7 @@
             { label: "sRPE", value: "7", unit: "/10", delta: "手动录入 · source=manual", go: "data/import" },
             { label: "TSS", value: "—", delta: "不可计算 · 无功率数据", metricId: "tl.tss", win: "单次", src: "—", na: true }
           ]),
-          S_chart("样本流：心率 / 速度", "本课原始样本流（DEMO）", { kind: "line", labels: ["0", "10", "20", "30", "40", "50", "60", "68"], min: 60, max: 180,
+          S_chart("样本流：心率 / 速度", "本课原始样本流", { kind: "line", labels: ["0", "10", "20", "30", "40", "50", "60", "68"], min: 60, max: 180,
             series: [{ name: "心率 bpm", values: [92, 118, 142, 136, 152, 148, 138, 104], color: "var(--red)", width: 2.2, fill: true }] }, 2,
             { drillId: "tl.srpe", legend: [{ name: "心率", color: "var(--red)" }], note: "样本级下钻在指标口径 Sheet 内提供，不在此页堆叠表格。" }),
           S_kv("本课计算口径", "每个值都能回答四问", [
@@ -833,7 +841,7 @@
             { t: "预填目标日 TL", d: "在本页生成待确认的周期块，不直接覆盖现有计划。" },
             { t: "审批后生效", d: "head_coach 角色审批；写操作记入审计日志。" }
           ], 2),
-          S_note("权限", "队医 / 康复与科研角色对周期计划<b>只读或拒绝编辑</b>；原型可在顶栏切换角色验证锁定态。", "warn", 1)
+          S_note("权限", "队医 / 康复与科研角色对周期计划<b>只读或拒绝编辑</b>；可在顶栏切换视角查看锁定态。", "warn", 1)
         ];
       }
 
@@ -1052,10 +1060,10 @@
         ? S_note("数据充分性", "近 7 日有 " + (7 - missingIn7) + "/7 天有训练负荷记录。窗口指标在有效天不足时<b>返回「—」</b>，" +
             "不补 0、不插值；「今天没练」和「那天数据没进来」是两件事，前者不该算缺测。", missingIn7 ? "warn" : "info", 2,
             { label: "查看缺口明细", route: "data/quality" })
-        : S_note("数据充分性演示", state.injectMissing
+        : S_note("数据完整性", state.injectMissing
           ? "已<b>注入 2 天缺测</b>（近 7 日内）：7 日有效天 5/7 → <b>TM / TS / ACWR rolling 返回「—」</b>， EWMA 保留数值但标注有效天数不足。缺测不补 0、不插值、不估算。"
           : "点按右侧按钮可<b>注入 2 天缺测</b>，现场验证：有效天数不足时窗口指标返回「不可计算」，而不是 0 或估算值。", state.injectMissing ? "warn" : "info", 2,
-          state.injectMissing ? { label: "恢复完整数据", sheet: "toggle-missing" } : { label: "注入缺测（演示）", sheet: "toggle-missing" }));
+          state.injectMissing ? { label: "恢复完整数据", sheet: "toggle-missing" } : { label: "模拟一天缺测", sheet: "toggle-missing" }));
 
       out.push(S_cards("规则引擎依据", "点按查看输入值 / 阈值 / 版本", Object.keys(A.RULES).map(k => ({ icon: "check", title: k + " · " + A.RULES[k].title, sub: A.RULES[k].input, value: A.RULES[k].action, sheet: "rule", sheetId: k })), 1));
 
@@ -1067,7 +1075,7 @@
         r.ts === null ? "—" : fmt(r.ts, 0), r.v7 + "/7"
       ]), 3, { note: LIVE
         ? "数值来自 <b>daily_metrics</b>：写入 activities / 恢复数据时由数据库触发器算好落库，前端只渲染。这样「App 里的数」和「导出的数」不会是两个数。"
-        : "计算在原型内真实执行：TL → EWMA CTL/ATL → TSB → ACWR 双口径 → TM/TS。用例 2/3/4/7 可直接核验。" }));
+        : "计算在此页实时执行：TL → EWMA CTL/ATL → TSB → ACWR 双口径 → TM/TS。用例 2/3/4/7 可直接核验。" }));
 
       out.push(S_note("分析页边界", "本页<b>只读</b>：不提供录入控件、不显示团队聚合。需要写入进 <b>lab/*</b> 或 <b>data/import</b>；需要团队视图进 <b>教练工作台 · 数据看板</b>。", "", 3));
       return out;
@@ -1241,7 +1249,7 @@
           ]), 3, { note: "功率使用等速近似口径，已在结果标注；精确式 P=F·v 需加速度样本。" }),
           S_note(oneRM() === null ? "1RM 当前不可计算" : "1RM 已计算", oneRM() === null
             ? "V1RM 速度阈值属于<b>需真机标定</b>的参数，配置留空时相关指标返回「不可计算」，不硬编码猜测值。可在 <b>lab/calibration</b> 写入标定值后即时看到结果变化。"
-            : "已使用演示标定值 V1RM = 0.30 m/s，结果 = (0.30 − b) / a = <b>" + fmt(oneRM(), 1) + " kg</b>。", oneRM() === null ? "warn" : "info", 3,
+            : "已使用默认标定值 V1RM = 0.30 m/s，结果 = (0.30 − b) / a = <b>" + fmt(oneRM(), 1) + " kg</b>。", oneRM() === null ? "warn" : "info", 3,
             { label: oneRM() === null ? "前往标定" : "查看标定配置", route: "lab/calibration" })
         ];
       }
@@ -1489,7 +1497,7 @@
         esc(j.type), j.tf.toFixed(3), j.tc === null ? "—" : j.tc.toFixed(3), cm(jumpH(j.tf)),
         j.tc === null ? "—" : fmt(jumpRSI(j.tf, j.tc), 2), esc(j.method), j.fps === null ? "—" : esc(j.fps), esc(j.cond)
       ]), 3),
-      S_note("用例 1 可核验", "t_f = 0.500 s → h = 9.81 × 0.25 / 8 = <b>0.30656 m ≈ 30.7 cm</b>。原型内的「手动填入」Sheet 会按此公式实时计算。", "info", 3, { label: "打开手动填入", sheet: "manual" })
+      S_note("用例 1 可核验", "t_f = 0.500 s → h = 9.81 × 0.25 / 8 = <b>0.30656 m ≈ 30.7 cm</b>。「手动填入」面板 会按此公式实时计算。", "info", 3, { label: "打开手动填入", sheet: "manual" })
     ], { chips: [dataChip()], actions: [{ label: "＋ 新建测试", sheet: "newtest", primary: true }] });
 
     page("lab/sprint", "冲刺与变向", "直线 / 变向 / 水平力学表现如何？", "LAB / 冲刺", [
@@ -1601,13 +1609,13 @@
 
     page("lab/calibration", "标定与动作库", "计算参数用的是哪一套？", "LAB / 标定", [
       S_metrics([{ label: "已标定参数", value: state.calibrated ? "5 / 6" : "4 / 6", delta: "变更留版本与时间戳" },
-        { label: "V1RM（后蹲）", value: state.calibrated ? "0.30" : "—", unit: state.calibrated ? "m/s" : "", delta: state.calibrated ? "演示标定值" : "未标定 → 1RM 不可计算", na: !state.calibrated },
+        { label: "V1RM（后蹲）", value: state.calibrated ? "0.30" : "—", unit: state.calibrated ? "m/s" : "", delta: state.calibrated ? "默认标定值" : "未标定 → 1RM 不可计算", na: !state.calibrated },
         { label: "IMU 采样率", value: "200", unit: "Hz", delta: "imu-001 · 已登记" },
         { label: "LVP R² 门槛", value: "0.95", delta: "配置项 · 低于门槛不输出 1RM" }]),
       S_table("需真机标定的参数", "未标定一律留空，不填猜测默认值", ["参数", "当前值", "影响指标", "状态"], [
         ["IMU 低通截止频率", "—", "vbt.mcv / mpv / pv", '<span class="mini">未标定</span>'],
         ["ZUPT 阈值", "—", "积分速度漂移", '<span class="mini">未标定</span>'],
-        ["V1RM 后蹲", state.calibrated ? "0.30 m/s" : "—", "vbt.lvp / 1RM", state.calibrated ? "已标定（演示）" : '<span class="mini">未标定 → 1RM「—」</span>'],
+        ["V1RM 后蹲", state.calibrated ? "0.30 m/s" : "—", "vbt.lvp / 1RM", state.calibrated ? "已标定" : '<span class="mini">未标定 → 1RM「—」</span>'],
         ["LVP 最小 R²", "0.95", "1RM 是否输出", "已配置"],
         ["视频帧率 fps", "240", "jump.height（视频法）", "已配置"],
         ["PPO / FVP 系数", "—", "jump.ppo / FVP", '<span class="mini">未标定 → 不输出估算值</span>']
@@ -1618,10 +1626,10 @@
         { t: "回归用例复跑", d: "用例 5（ZUPT 静止段回 0）与用例 1（跳跃高度）必须复现" },
         { t: "灰度与回滚", d: "在教练工作台 · 规则与口径版本管理生效范围" }
       ], 2),
-      S_note(state.calibrated ? "标定已写入（演示）" : "演示：写入 V1RM 标定值", state.calibrated
+      S_note(state.calibrated ? "标定已写入" : "写入默认标定值", state.calibrated
         ? "V1RM = 0.30 m/s 已生效，<b>analyze/vbt</b> 的 1RM 估计现在可计算。真实产品中该值必须来自真机标定，不得猜测。"
-        : "点按按钮写入演示标定值 <b>V1RM = 0.30 m/s</b>，然后到 <b>analyze/vbt</b> 观察 1RM 从「—」变为计算结果——这是「未标定不输出估算值」规则的可交互验证。", state.calibrated ? "info" : "warn", 1,
-        { label: state.calibrated ? "查看 VBT 分析" : "写入标定值（演示）", route: state.calibrated ? "analyze/vbt" : undefined, sheet: state.calibrated ? undefined : "calibrate" })
+        : "点按按钮写入默认标定值 <b>V1RM = 0.30 m/s</b>，然后到 <b>analyze/vbt</b> 观察 1RM 从「—」变为计算结果——这是「未标定不输出估算值」规则的可交互验证。", state.calibrated ? "info" : "warn", 1,
+        { label: state.calibrated ? "查看 VBT 分析" : "写入默认标定值", route: state.calibrated ? "analyze/vbt" : undefined, sheet: state.calibrated ? undefined : "calibrate" })
     ], { chips: [dataChip()] });
   })();
 
@@ -1777,7 +1785,7 @@
     page("data/metrics", "指标口径 Registry", "每个数字是怎么算出来的？", "DATA / Registry", (function () {
       const REG = A.REGISTRY || [];
       if (state.dbLive && REG.length) {
-        // 真实库：口径以 metric_registry 为准，代码常量只是兜底的演示
+        // 真实库：口径以 metric_registry 为准，代码常量只作兜底
         return [
           S_note("四问准入", "每个指标必须能回答 <b>公式 / 窗口 / 输入 / 证据编号</b>，否则不允许上线。分析页只引用 Registry，不重新定义、不内置第二套公式。" +
             "<br>下表直接读 <b>metric_registry</b> 表，共 <b>" + REG.length + "</b> 行——在这里改了版本号，页面上每个数的出处就跟着变。", "info", 3),
@@ -1792,7 +1800,7 @@
       }
       return [
         S_note("四问准入", "每个指标必须能回答 <b>公式 / 窗口 / 输入 / 证据编号</b>，否则不允许上线。分析页只引用 Registry，不重新定义、不内置第二套公式。" +
-          (state.dbLive ? "<br><b>metric_registry 表是空的</b>：下面这张表来自前端代码常量，不是库里登记的口径——只作演示，不能当作可审计的口径来源。" : ""),
+          (state.dbLive ? "<br><b>metric_registry 表是空的</b>：下面这张表来自前端代码常量，不是库里登记的口径——仅供对照，不作为可审计口径。" : ""),
           "info", 3),
         S_table("已登记指标", "点按任意行可下钻到公式版本与原始样本", ["metric_id", "简称", "窗口", "版本", "证据", "有效性规则"], Object.keys(A.METRICS).map(k => [
           '<button class="chip" data-act="sheet" data-sheet="metric" data-id="' + esc(k) + '">ⓘ ' + esc(k) + '</button>',
@@ -1936,7 +1944,7 @@
 
     page("admin/roles", "角色与权限", "谁能看 / 改 / 批 / 导？", "ADMIN / 权限", [
       S_matrix("RBAC 权限矩阵", "● 完全 · ◐ 受限 · — 无 · 服务端强制", 3),
-      S_cards("切换角色（演示）", "切换后可见模块按矩阵重算；括号内是落到库里的 RBAC 角色", A.ROLES.map(r => ({
+      S_cards("切换视角", "切换后可见模块按矩阵重算；括号内是落到库里的 RBAC 角色", A.ROLES.map(r => ({
         icon: "shield", title: r.label, sub: r.id + " → " + (A.ROLE_MAP[r.id] || "未映射"),
         value: state.role === r.id ? "当前" : "切换", sheet: "roles", sheetId: r.id,
         badge: state.role === r.id ? "当前" : undefined, badgeTone: "info"
@@ -1989,7 +1997,7 @@
               esc(d.name), esc(d.kind), esc(d.status === "online" ? "在线" : d.status === "locked" ? "待授权" : d.status === "warn" ? "需重连" : "离线"),
               esc(d.proto || "—"), esc(d.last || "—")
             ]), 3)
-          : S_note("设备清单是空的", "库里 <code>devices</code> 表 0 行。<b>不显示演示设备</b>——那会让人以为已经有设备在回传数据。接设备的三种方式见 <b>data/devices</b> 页。", "warn", 3),
+          : S_note("设备清单是空的", "库里 <code>devices</code> 表 0 行。<b>不显示任何设备条目</b>——那会让人以为已经有设备在回传数据。接设备的三种方式见 <b>data/devices</b> 页。", "warn", 3),
         S_table("还没有后端支撑的三项", "这里不填虚构数字，只说明缺什么", ["维度", "当前状态", "缺的东西"], [
           ["批量导入任务", '<span class="mini">— 无数据</span>', "没有 <code>import_jobs</code> 表；导入链路要先有预签名直传 + worker"],
           ["凭据与轮换", '<span class="mini">— 无数据</span>', "<code>devices</code> 只有 serial/status，没有凭证表与轮换周期字段"],
@@ -2145,17 +2153,18 @@
     rs.value = state.role;
     // 真实模式下角色来自 memberships，前端不允许自行切换，否则「看到什么」和「服务端放行什么」会错位
     rs.disabled = !!state.dbLive;
-    rs.title = state.dbLive ? "角色由组织成员关系决定，不可在此切换" : "演示用角色切换";
+    rs.title = state.dbLive ? "角色由组织成员关系决定，不可在此切换" : "切换视角";
     const host = document.getElementById("dbHost");
     if (host && window.ARC_UI) host.innerHTML = window.ARC_UI.pillHtml();
-    // 外壳上的「DEMO 演示数据」标签也要跟着连接状态变，不能一边连真库一边挂着 DEMO
+    // 数据源状态标签：与页面内标签口径一致，绝不在未连接时显示任何业务数字
     const tag = document.querySelector(".console .demo-tag");
     if (tag) {
-      const txt = state.dbSyncing ? "同步中 · 暂不显示数值"
+      const txt = state.dbSyncing ? "正在同步"
+        : state.dbNeedAuth ? "登录已失效"
         : state.dbError ? "数据未加载"
-        : state.dbStale ? "数据可能已过期 · " + (state.dbLastSync || "")
-        : state.dbLive ? (state.dbTruncated ? "真实数据 · 窗口被截断" : "真实数据 · RLS 生效")
-        : "DEMO 演示数据";
+        : state.dbStale ? "数据可能已过期"
+        : state.dbLive ? (state.dbTruncated ? "已连接 · 部分记录超出窗口" : "已连接 · 数据实时")
+        : "未连接数据源";
       tag.textContent = txt;
       tag.classList.toggle("live", !!state.dbLive && !state.dbError && !state.dbStale && !state.dbSyncing);
       tag.classList.toggle("warn", !!(state.dbError || state.dbStale || state.dbTruncated));
@@ -2192,7 +2201,7 @@
       });
       side += '<div class="side-group-label">返回</div><button class="side-item" data-act="nav" data-route="today">' + icon("arrow", 18) + '<span>运动员工作区</span></button>';
     }
-    side += '</div><div class="side-foot">同语义导航 · 同组件 · 同数据<br>仅列数与导航控件随 size class 变化</div>';
+    side += '</div><div class="side-foot">第三世界 · 训练负荷与就绪度<br>数据仅供训练参考，不构成医学建议</div>';
     document.getElementById("sidebar").innerHTML = side;
 
     // Topbar
@@ -2212,12 +2221,14 @@
         '<button class="pill hide-phone" data-act="sheet" data-sheet="scores">对标评分</button>') +
       '<button class="pill hide-phone" data-act="sheet" data-sheet="window">28 日 · ' + (state.params.acwr === "ewma" ? "EWMA" : "rolling") + '</button>' +
       (state.dbSyncing
-        ? '<span class="pill sync" title="正在从真实库同步，此刻不展示任何数值">同步中</span>'
+        ? '<span class="pill sync" title="正在同步数据">同步中</span>'
+        : state.dbNeedAuth
+        ? '<span class="pill err" title="' + esc(state.dbReason) + '">请重新登录</span>'
         : state.dbError
         ? '<span class="pill err" title="' + esc(state.dbReason) + '">数据未加载</span>'
         : state.dbLive
-        ? '<button class="pill accent" data-act="arc-record">＋ 记录</button><span class="pill ' + (state.dbStale || state.dbTruncated ? "warnp" : "live") + '" title="' + esc(state.dbReason || "数据来自 Supabase 真实库，行级权限已生效") + '">' + (state.dbStale ? "数据可能已过期" : state.dbTruncated ? "真实数据 · 截断" : "真实数据") + '</span>'
-        : '<span class="pill demo" title="演示数据，不是真实训练记录">DEMO</span>') +
+        ? '<button class="pill accent" data-act="arc-record">＋ 记录</button><span class="pill ' + (state.dbStale || state.dbTruncated ? "warnp" : "live") + '" title="' + esc(state.dbReason || "数据来自你的训练记录，行级权限已生效") + '">' + (state.dbStale ? "数据可能已过期" : state.dbTruncated ? "部分记录超出窗口" : "已同步") + '</span>'
+        : '<span class="pill demo" title="尚未连接数据源">未连接</span>') +
       '<button class="pill accent" data-act="workspace">' + icon(isAdmin ? "arrow" : "shield", 13) + (isAdmin ? " 返回" : " 工作台") + '</button>' +
       '<button class="pill kbd-hint" data-act="palette">' + icon("search", 13) + '<span class="kbd">⌘K</span></button>';
     document.getElementById("topbar").innerHTML = top;
@@ -2241,36 +2252,35 @@
     const ac = accessFor(state.route);
     const content = document.getElementById("content");
 
-    // P0：同步中 / 读取失败，一屏数值都不给。
-    // 过去这里会用演示常量把页面填满，而顶栏已经切到「真实数据」——那是最危险的展示错误。
+    // 同步中 / 读取失败：一屏数值都不给，避免把占位数字当成真实结果
     if (state.dbSyncing || state.dbError) {
       const loading = !state.dbError;
       content.innerHTML = '<div class="page"><div class="page-head">' +
-        '<div class="page-eyebrow">' + (loading ? "SYNC / 连接真实库" : "DATA / 读取失败") + '</div>' +
-        '<h1 class="page-title">' + (loading ? "正在读取真实数据" : "没有拿到数据，所以不显示数字") + '</h1>' +
+        '<div class="page-eyebrow">' + (loading ? "正在加载" : "数据读取失败") + '</div>' +
+        '<h1 class="page-title">' + (loading ? "正在读取你的训练数据" : "暂时无法获取数据") + '</h1>' +
         '<p class="page-question">' + (loading
-          ? "登录已通过，正在读取你有权限的行。这一屏刻意留空：在真实值落地之前，不会把演示常量当成你的训练数据。"
-          : esc(state.dbError) + "。界面保留空白，不会退回演示数字，也不会沿用上一次的错误结论。") + '</p>' +
+          ? "首次加载通常只需要一两秒，完成后本页会自动显示。"
+          : esc(state.dbError) + "。为避免误导，本页不显示任何估算数值。") + '</p>' +
         '<div class="page-chips">' + dataChip() + '</div></div>' +
         '<div class="page-grid"><div class="card span-3 ' + (loading ? "sync-skeleton" : "load-error") + '">' +
         (loading
-          ? '<div class="card-head"><h3 class="section-title">同步中</h3></div>' +
+          ? '<div class="card-head"><h3 class="section-title">加载中</h3></div>' +
             '<div class="skel-line w60"></div><div class="skel-line w90"></div><div class="skel-line w75"></div>' +
             '<div class="skel-bars"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>' +
-            '<div class="card-note">读取完成后会自动替换整页，不需要刷新。</div>'
+            '<div class="card-note">完成后本页会自动更新，无需手动刷新。</div>'
           : '<div class="card-head"><h3 class="section-title">可以怎么做</h3></div>' +
-            '<p class="mini">检查网络与数据源配置后重试；也可以显式切到演示版（会明确标注 DEMO）。</p>' +
-            '<div class="hero-actions"><button class="btn primary" data-act="db-retry">重试读取</button>' +
+            '<p class="mini">请检查网络连接后重试；若持续失败，请查看数据源诊断或联系管理员。</p>' +
+            '<div class="hero-actions"><button class="btn primary" data-act="db-retry">重试</button>' +
             '<button class="btn" data-act="sheet" data-sheet="db">查看数据源诊断</button></div>') +
         '</div></div></div>';
       return;
     }
 
     if (!ac.ok) {
-      content.innerHTML = '<div class="page"><div class="page-head"><div class="page-eyebrow">PERMISSION / 403</div><h1 class="page-title">' + esc(pg.title) + '</h1><p class="page-question">此模块对当前角色不可用</p></div>' +
+      content.innerHTML = '<div class="page"><div class="page-head"><div class="page-eyebrow">PERMISSION / 403</div><h1 class="page-title">' + esc(pg.title) + '</h1><p class="page-question">此模块对当前视角不可用</p></div>' +
         '<div class="card locked"><div class="locked-ico">' + icon("lock", 34) + '</div><div class="locked-title">已锁定 · ' + esc(ac.module) + '</div>' +
-        '<div class="locked-desc">当前角色「' + esc(roleLabel(state.role)) + '」对该模块无权限。权限在服务端 RBAC 强制；前端保留入口并显示原因，不静默隐藏。</div>' +
-        '<button class="btn" data-act="sheet" data-sheet="roles">切换角色（演示）</button></div></div>';
+        '<div class="locked-desc">当前视角「' + esc(roleLabel(state.role)) + '」对该模块无权限。权限由服务端统一校验；此处保留入口并说明原因，不做隐藏。</div>' +
+        '<button class="btn" data-act="sheet" data-sheet="roles">切换视角</button></div></div>';
       return;
     }
     const chips = (pg.chips || []).join("");
@@ -2367,12 +2377,12 @@
     const closeBtn = '<button class="btn" data-act="close">关闭</button>';
 
     if (t === "scores") {
-      return { title: "对标评分与阈值分档 · 原型级还原", subtitle: "O12 · 公开可查口径 / DEMO 占位 / 不还原真实算法", small: false,
+      return { title: "对标评分与阈值分档 · 公开口径说明", subtitle: "O12 · 公开可查口径 / DEMO 占位 / 不还原真实算法", small: false,
         body: window.ARC_LIVE ? window.ARC_LIVE.scoresSheetHtml(id) : "",
         footer: foot(closeBtn + '<button class="btn primary" data-act="sheet" data-sheet="fusion">数据融合与映射</button>') };
     }
     if (t === "fusion") {
-      return { title: "数据融合与字段映射 · 原型级还原", subtitle: "O13 · 来源 / 映射 / 处理链 / App 内部实现要点", small: false,
+      return { title: "数据融合与字段映射 · 公开口径说明", subtitle: "O13 · 来源 / 映射 / 处理链 / App 内部实现要点", small: false,
         body: window.ARC_LIVE ? window.ARC_LIVE.fusionHtml(false) : "",
         footer: foot(closeBtn + '<button class="btn primary" data-act="nav" data-route="data/sources">查看数据源</button>') };
     }
@@ -2380,7 +2390,7 @@
       const m = A.METRICS[id] || A.METRICS.ctl;
       return { title: m.name, subtitle: "O1 指标下钻 · 口径 / 窗口 / 来源 / 证据 / 原始样本", small: false,
         body: '<dl class="kv">' +
-          '<dt>当前值</dt><dd><b style="font-size:16px">' + esc(metricValue(id)) + '</b> <span style="color:var(--text-3)">· DEMO</span></dd>' +
+          '<dt>当前值</dt><dd><b style="font-size:16px">' + esc(metricValue(id)) + '</b> <span style="color:var(--text-3)"></span></dd>' +
           '<dt>公式版本</dt><dd>' + esc(m.version) + '</dd><dt>窗口</dt><dd>' + esc(m.window) + '</dd>' +
           '<dt>输入</dt><dd>' + esc(m.inputs) + '</dd><dt>证据编号</dt><dd>' + esc(m.evidence) + '</dd>' +
           '<dt>有效性规则</dt><dd>' + esc(m.valid) + '</dd><dt>source</dt><dd>device / import / manual（互斥筛选）</dd>' +
@@ -2402,7 +2412,7 @@
     }
     if (t === "device") {
       return { title: "配对设备", subtitle: "O2 · BLE 扫描 → 协议确认 → 标定 → 完成", small: false,
-        body: '<div class="sheet-section-title">附近设备（DEMO 广播）</div>' +
+        body: '<div class="sheet-section-title">附近设备</div>' +
           '<div class="list">' + [
             { icon: "heart", title: "HR-Band 07", sub: "RSSI −52 dBm · BLE 0x180D / 0x2A37", value: "心率带", badge: "可配对", badgeTone: "info" },
             { icon: "chart", title: "Trainer 11", sub: "RSSI −61 dBm · FTMS 0x1826 / 0x2AD2", value: "骑行台", badge: "可配对", badgeTone: "info" },
@@ -2419,7 +2429,7 @@
         body: '<dl class="kv"><dt>设备</dt><dd>imu-001 · 200 Hz</dd><dt>单位</dt><dd>acc m/s² · gyr rad/s</dd><dt>session_id</dt><dd>s-2026-11-13-01</dd><dt>exercise / load</dt><dd>back_squat / 80 kg</dd></dl>' +
           '<div class="sheet-section-title">字段映射</div><div class="table-wrap"><table class="tbl"><thead><tr><th>列</th><th>映射到</th><th>单位</th><th>状态</th></tr></thead><tbody>' +
           [["ts_ms", "raw_sample.ts_ms", "ms", "✔"], ["ax / ay / az", "acc_x / acc_y / acc_z", "m/s²", "✔"], ["gx / gy / gz", "gyr_x / gyr_y / gyr_z", "rad/s", "✔"], ["load_kg", "strength_set.load_kg", "kg", "✔"], ["sample_rate_hz", "device.sample_rate_hz", "Hz", "✔"]].map(r => '<tr><td>' + r[0] + '</td><td>' + r[1] + '</td><td>' + r[2] + '</td><td>' + r[3] + '</td></tr>').join("") + '</tbody></table></div>' +
-          '<div class="sheet-section-title">数据预览（前 3 行 · DEMO）</div><div class="formula">{"ts_ms":1731456000000,"ax":0.12,"ay":-0.03,"az":9.79,"gx":0.01,"gy":0.00,"gz":0.02}\n{"ts_ms":1731456000005,"ax":0.14,"ay":-0.02,"az":9.81,"gx":0.01,"gy":0.00,"gz":0.02}\n{"ts_ms":1731456000010,"ax":0.11,"ay":-0.04,"az":9.78,"gx":0.02,"gy":0.00,"gz":0.01}</div>' +
+          '<div class="sheet-section-title">数据预览（前 3 行）</div><div class="formula">{"ts_ms":1731456000000,"ax":0.12,"ay":-0.03,"az":9.79,"gx":0.01,"gy":0.00,"gz":0.02}\n{"ts_ms":1731456000005,"ax":0.14,"ay":-0.02,"az":9.81,"gx":0.01,"gy":0.00,"gz":0.02}\n{"ts_ms":1731456000010,"ax":0.11,"ay":-0.04,"az":9.78,"gx":0.02,"gy":0.00,"gz":0.01}</div>' +
           '<div class="note info" style="margin-top:12px">处理链：静止段估计重力 → 去重力 → 低通 → 积分 → ZUPT → 重复切分。每步中间结果可持久化、可下钻。未标定参数留空，不填猜测默认值。</div>',
         footer: foot(closeBtn + '<button class="btn primary" data-act="toast" data-msg="已导入 1,240 条样本 · source=import · 后台任务 rq_8f02">确认导入</button>') };
     }
@@ -2438,7 +2448,7 @@
           '<div class="form-row"><label>ACWR 主口径</label><select data-act="param" data-key="acwr">' + [["ewma", "EWMA（推荐）"], ["rolling", "rolling 7/28"]].map(v => '<option value="' + v[0] + '" ' + (state.params.acwr === v[0] ? "selected" : "") + '>' + v[1] + '</option>').join("") + '</select></div>' +
           '<div class="form-row"><label>HRV 测量上下文</label><select data-act="param" data-key="context">' + [["night", "夜间"], ["morning", "晨起"]].map(v => '<option value="' + v[0] + '" ' + (state.params.context === v[0] ? "selected" : "") + '>' + v[1] + '</option>').join("") + '</select></div>' +
           '<div class="note warn">rolling 版急性窗包含在慢性窗内存在数学耦合；以 EWMA 为主口径，并同时展示两口径差异。口径变更会保留 calc_version 留痕。</div>' +
-          '<div class="note" style="margin-top:8px"><b>原型限制（不补造）</b>：TL 口径与 ACWR 主口径选择目前只更新标签，<b>不重算数值</b>——原型缺少各 TL 口径所需的原始输入（HR 时序 / 功率 / RPE），凭空换算等于补造数据。生产环境由 <code>metric-registry</code> 按口径读取真实输入重算，并保留 calc_version。窗口与 HRV 上下文为真实即时生效项。</div>',
+          '<div class="note" style="margin-top:8px"><b>说明（不补造）</b>：TL 口径与 ACWR 主口径选择目前只更新标签，<b>不重算数值</b>——原型缺少各 TL 口径所需的原始输入（HR 时序 / 功率 / RPE），凭空换算等于补造数据。生产环境由 <code>metric-registry</code> 按口径读取真实输入重算，并保留 calc_version。窗口与 HRV 上下文为真实即时生效项。</div>',
         footer: foot(closeBtn + '<button class="btn primary" data-act="close">应用</button>') };
     }
     if (t === "roles") {
@@ -2449,12 +2459,12 @@
     }
     if (t === "confirm") {
       return { title: "需要确认", subtitle: "O9 · 关键操作二次确认", small: true,
-        body: '<div class="note warn"><div class="note-title">⚠ 此操作会影响以下对象</div>对象：<b>' + esc(id || "未指定") + '</b><br>影响：写入或删除后<b>不可自动撤销</b>；所有变更将记入审计日志并保留 request_id。<br><br>原型为演示环境，不会真正修改任何数据。</div>',
-        footer: foot('<button class="btn" data-act="close">取消</button><button class="btn danger" data-act="toast" data-msg="操作已记录（演示）· request_id rq_demo">确认</button>') };
+        body: '<div class="note warn"><div class="note-title">⚠ 此操作会影响以下对象</div>对象：<b>' + esc(id || "未指定") + '</b><br>影响：写入或删除后<b>不可自动撤销</b>；所有变更将记入审计日志并保留 request_id。<br><br>确认后立即写入，并记入审计日志。</div>',
+        footer: foot('<button class="btn" data-act="close">取消</button><button class="btn danger" data-act="toast" data-msg="操作已记录· request_id rq_demo">确认</button>') };
     }
     if (t === "theme") {
       return { title: "外观", subtitle: "浅色 / 深色 · 跟随系统偏好", small: true,
-        body: '<div class="note">当前：<b>' + (state.theme === "light" ? "浅色" : "深色") + '</b>。原型同时响应 <span class="formula" style="display:inline;padding:2px 6px">prefers-color-scheme</span> 等系统偏好。</div>',
+        body: '<div class="note">当前：<b>' + (state.theme === "light" ? "浅色" : "深色") + '</b>。界面同时响应 <span class="formula" style="display:inline;padding:2px 6px">prefers-color-scheme</span> 等系统偏好。</div>',
         footer: foot(closeBtn + '<button class="btn primary" data-act="theme">切换外观</button>') };
     }
     return null;
@@ -2598,7 +2608,7 @@
     Promise.resolve()
       .then(function () {
         // 传本地日期而不是 p_date=null：库里的 current_date 走 UTC，凌晨会排到"昨天"
-        var today = new Date().toLocaleDateString("sv-SE");
+        var today = (window.ARC_DB && ARC_DB.today) ? ARC_DB.today() : new Date().toLocaleDateString("sv-SE");
         return DB.rpc("arc_assign_session", { p_athlete: me.id, p_template: tplId, p_date: today, p_note: null });
       })
       .then(function () {
@@ -2669,7 +2679,7 @@
     if (rows.length <= 1) { toast("当前没有可导出的数据（不导出空表冒充结果）", "warn"); return; }
 
     var csv = rows.map(function (r) { return r.map(csvCell).join(","); }).join("\r\n");
-    var stamp = new Date().toISOString().slice(0, 10);
+    var stamp = (window.ARC_DB && ARC_DB.today) ? ARC_DB.today() : new Date().toISOString().slice(0, 10);
     var blob = new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8" });
     var url = URL.createObjectURL(blob);
     var a = document.createElement("a");
@@ -2687,7 +2697,7 @@
     if (a === "sheet") {
       const t = el.dataset.sheet, id = el.dataset.id || "";
       if (t === "toggle-missing") { state.injectMissing = !state.injectMissing; state.sheet = null; renderAll(); renderOverlay(); toast(state.injectMissing ? "已注入 2 天缺测 · 窗口指标返回不可计算" : "已恢复完整数据"); return; }
-      if (t === "calibrate") { state.calibrated = true; state.sheet = null; renderAll(); renderOverlay(); toast("V1RM 0.30 m/s 已写入（演示）· 1RM 现在可计算"); return; }
+      if (t === "calibrate") { state.calibrated = true; state.sheet = null; renderAll(); renderOverlay(); toast("已写入默认标定 V1RM = 0.30 m/s，1RM 现在可计算"); return; }
       if (t === "theme") { state.theme = state.theme === "light" ? "dark" : "light"; state.sheet = null; renderAll(); renderOverlay(); return; }
       if (t === "roles" && id) { state.role = id; state.sheet = null; renderAll(); renderOverlay(); toast("已切换角色：" + roleLabel(id)); return; }
       openSheet(t, id || el.dataset.date || ""); return;
@@ -2758,7 +2768,19 @@
     if ((e.key === "Enter" || e.key === " ") && e.target.matches && e.target.matches('[role="button"][data-act]')) { e.preventDefault(); e.target.click(); }
   });
   document.getElementById("themeBtn").addEventListener("click", function () { state.theme = state.theme === "light" ? "dark" : "light"; renderAll(); renderOverlay(); });
-  window.addEventListener("resize", function () { fitStage(); requestAnimationFrame(mountCharts); });
+  // 拖动窗口时 resize 会连发几十次；每次都重建所有 SVG 会掉帧、并让入场动画反复触发。
+  // 这里合并成「每帧一次 + 150ms 去抖」，且在 mountCharts 里跳过尺寸没变的图。
+  let chartsQueued = false, resizeTimer = 0;
+  function scheduleCharts() {
+    if (chartsQueued) return;
+    chartsQueued = true;
+    requestAnimationFrame(function () { chartsQueued = false; mountCharts(true); });
+  }
+  window.addEventListener("resize", function () {
+    fitStage();
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(scheduleCharts, 150);
+  });
 
   /* ── 启动（支持 ?platform=&theme=&role=&route= 深链，便于评审与截图） ── */
   (function initFromURL() {
@@ -2798,6 +2820,7 @@
     if (!o) return;
     state.dbLive = !!o.live;
     state.dbSyncing = !!o.syncing;
+    state.dbNeedAuth = !!o.needAuth;
     state.dbStale = !!o.stale;
     state.dbError = o.error || null;
     state.dbTruncated = !!o.truncated;

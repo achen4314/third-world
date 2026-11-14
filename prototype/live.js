@@ -447,7 +447,7 @@
       '</div></div>' +
       '<div class="lb-filters"><span class="lb-k">窗口</span><div class="lb-seg-wrap">' + seg("window", [[7, "7 日"], [28, "28 日"], [42, "42 日"], [90, "90 日"]]) + '</div>' +
       '<span class="lb-k">来源</span><div class="lb-seg-wrap">' + seg("source", [["all", "全部"], ["device", "device"], ["import", "import"], ["manual", "manual"]]) + '</div>' +
-      '<span class="lb-k">状态演示</span><div class="lb-seg-wrap">' + status + '</div></div>' +
+      '<span class="lb-k">状态示例</span><div class="lb-seg-wrap">' + status + '</div></div>' +
       '<div class="lb-note">' + DEMO + ' <span data-live-note>' + esc(L.stateOverlayNote()) + '</span></div>' +
       '</div>';
   };
@@ -490,7 +490,7 @@
 
   L.scoresSheetHtml = function (focusId) {
     const order = focusId && L.SCORE_BY_ID[focusId] ? [L.SCORE_BY_ID[focusId]].concat(L.SCORES.filter(s => s.id !== focusId)) : L.SCORES;
-    return '<div class="note warn"><div class="note-title">⚠ 原型级还原边界</div>下表只复现<b>公开资料可查的名称、阈值分档与状态含义</b>，用于界面与信息层级对标评估。所有数值为 DEMO 占位，由原型生成器给出，<b>与任何厂商设备的真实输出无对应关系</b>；不实现 EPOC、Firstbeat、自适应基线等真实算法，不输出医学结论，不构成训练或医学建议。</div>' +
+    return '<div class="note warn"><div class="note-title">⚠ 公开口径说明边界</div>下表只复现<b>公开资料可查的名称、阈值分档与状态含义</b>，用于界面与信息层级对标评估。所有数值为 DEMO 占位，由原型生成器给出，<b>与任何厂商设备的真实输出无对应关系</b>；不实现 EPOC、Firstbeat、自适应基线等真实算法，不输出医学结论，不构成训练或医学建议。</div>' +
       order.map(s => '<div class="sheet-section-title">' + esc(s.name) + ' <span class="chip demo">DEMO</span></div>' +
         '<dl class="kv"><dt>厂商 / 刻度</dt><dd>' + esc(s.vendor) + ' · ' + esc(s.range[0]) + '–' + esc(s.range[1]) + ' ' + esc(s.unit) + '</dd>' +
         '<dt>公开口径</dt><dd>' + esc(s.definition) + '</dd>' +
@@ -503,7 +503,7 @@
         (s.diff ? '<div class="note" style="margin-top:8px"><b>公开资料差异标注</b>：' + esc(s.diff) + '</div>' : "")).join("") +
       '<div class="sheet-section-title">还原范围与不还原范围</div>' +
       '<div class="table-wrap"><table class="tbl"><thead><tr><th>项</th><th>本原型</th></tr></thead><tbody>' +
-      [["评分名称 / 分档标签 / 状态含义", "✅ 原型级还原（公开可查部分）"], ["阈值区间与档位数", "✅ 原型级还原；官方资料存在差异时并列标注，不合并"], ["DEMO 占位数值", "✅ 统一标记，占位生成器给出"], ["真实算法（EPOC / Firstbeat / 自适应基线）", "❌ 不实现、不宣称还原、不编造"], ["厂商界面资产 / 图标 / 配色素材", "❌ 不复制，使用 ARC 自有组件"], ["医学结论与诊断", "❌ 不输出"], ["厂商云端 API 真实数据", "❌ 未授权前不接入"]].map(r => '<tr><td>' + esc(r[0]) + '</td><td>' + esc(r[1]) + '</td></tr>').join("") +
+      [["评分名称 / 分档标签 / 状态含义", "✅ 公开口径说明（公开可查部分）"], ["阈值区间与档位数", "✅ 公开口径说明；官方资料存在差异时并列标注，不合并"], ["DEMO 占位数值", "✅ 统一标记，占位生成器给出"], ["真实算法（EPOC / Firstbeat / 自适应基线）", "❌ 不实现、不宣称还原、不编造"], ["厂商界面资产 / 图标 / 配色素材", "❌ 不复制，使用 ARC 自有组件"], ["医学结论与诊断", "❌ 不输出"], ["厂商云端 API 真实数据", "❌ 未授权前不接入"]].map(r => '<tr><td>' + esc(r[0]) + '</td><td>' + esc(r[1]) + '</td></tr>').join("") +
       '</tbody></table></div>';
   };
 
@@ -512,7 +512,7 @@
     const F = L.FUSION;
     const tbl = (cols, rows) => '<div class="table-wrap"><table class="tbl"><thead><tr>' + cols.map(c => '<th>' + esc(c) + '</th>').join("") + '</tr></thead><tbody>' +
       rows.map(r => '<tr>' + r.map(c => '<td><span class="mini">' + esc(c) + '</span></td>').join("") + '</tr>').join("") + '</tbody></table></div>';
-    let h = '<div class="note info"><b>还原范围</b>：以下为<b>自研原型实现要点（对标能力域）</b>——数据来源清单、字段映射、处理链与模块边界，按原型级还原呈现。<b>不是任何厂商 App 内部实现或传感器融合标定的还原</b>；未取得授权前不接入厂商云端 API，专有融合参数留空不猜测。</div>';
+    let h = '<div class="note info"><b>还原范围</b>：以下为<b>自研原型实现要点（对标能力域）</b>——数据来源清单、字段映射、处理链与模块边界，按公开口径说明呈现。<b>不是任何厂商 App 内部实现或传感器融合标定的还原</b>；未取得授权前不接入厂商云端 API，专有融合参数留空不猜测。</div>';
     h += '<div class="sheet-section-title">① 数据来源清单 ' + DEMO + '</div>' + tbl(["来源", "协议 / 格式", "采样率", "source", "字段"], F.sources);
     h += '<div class="sheet-section-title">② 字段映射（源字段 → 统一时序 → 派生指标）</div>' + tbl(["源字段", "统一字段 / stream_type", "单位", "派生指标", "证据"], F.mapping);
     if (!compact) {
@@ -524,7 +524,7 @@
     return h;
   };
   L.fusionSectionHtml = function () {
-    return '<div class="card span-3 fusion-section"><div class="section-head"><h3 class="section-title">数据融合与字段映射 · 原型级还原</h3>' +
+    return '<div class="card span-3 fusion-section"><div class="section-head"><h3 class="section-title">数据融合与字段映射 · 公开口径说明</h3>' +
       '<span class="section-sub">来源 → 统一时序 → 派生指标</span><div class="section-tools"><button class="chip" data-act="sheet" data-sheet="fusion">ⓘ 完整实现要点</button></div></div>' +
       L.fusionHtml(true) +
       '<div class="card-note">全部为自研原型实现要点，不是厂商 App 内部实现还原；示例字段与数值均为 DEMO。</div></div>';

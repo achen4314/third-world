@@ -95,6 +95,7 @@
       try {
         window.ARC_DB_STATUS({
           live: S.mode === "live",
+          needAuth: !S.session,
           syncing: S.syncing,
           stale: S.stale,
           error: S.error,
@@ -135,16 +136,28 @@
     if (opt.prefer) headers.Prefer = opt.prefer;
 
     var res;
+    // 每个请求都要有上限：没有超时的话，一个卡住的 TCP 连接会让整页永远停在「同步中」，
+    // 用户看到的是一个转不完的骨架屏，而不是一个可以说清楚的错误。
+    var TIMEOUT = opt.timeout || 15000;
+    var ctrl = (typeof AbortController !== "undefined") ? new AbortController() : null;
+    var timer = ctrl ? setTimeout(function () { ctrl.abort(); }, TIMEOUT) : 0;
     try {
       res = await fetch(S.url + path, {
         method: opt.method || "GET",
         headers: headers,
-        body: opt.body !== undefined ? JSON.stringify(opt.body) : undefined
+        body: opt.body !== undefined ? JSON.stringify(opt.body) : undefined,
+        signal: ctrl ? ctrl.signal : undefined
       });
     } catch (e) {
-      var err = new Error("网络不可达：请检查网络、代理或 SUPABASE_URL（" + (e.message || "fetch failed") + "）");
+      var aborted = e && (e.name === "AbortError" || /abort/i.test(String(e.message || "")));
+      var err = new Error(aborted
+        ? "请求超时（" + Math.round(TIMEOUT / 1000) + " 秒无响应）：请检查网络后重试"
+        : "网络不可达：请检查网络、代理或 SUPABASE_URL（" + (e.message || "fetch failed") + "）");
       err.network = true;
+      err.timeout = !!aborted;
       throw err;
+    } finally {
+      if (timer) clearTimeout(timer);
     }
     var text = await res.text();
     if (!res.ok) {
@@ -215,10 +228,11 @@
     };
     lsSet(LS_SESS, JSON.stringify(S.session));
   }
-  function clearSession() {
+  function clearSession(keepLastGood) {
     S.session = null; S.me = null; S.role = null; S.feRole = null;
-    // 换账号时绝不能让上一次的「保底数据」留给下一个用户看到
-    lastGood = null;
+    // 换账号时绝不能让上一次的「保底数据」留给下一个用户看到；
+    // 但「会话过期」不属于换账号，那时要留住上次数据，登录浮层会盖在上面。
+    if (!keepLastGood) lastGood = null;
     S.stale = false; S.error = null; S.syncing = false;
     lsSet(LS_SESS, null);
   }
@@ -595,7 +609,8 @@
       var summary = null, team = null;
       if (primary) {
         summary = await step("RPC · 当日总览 arc_daily_summary", function () {
-          return rpc("arc_daily_summary", { p_athlete: primary.id, p_date: null });
+          // 必须传本地日期：库端 current_date 走 UTC，北京 0–8 点会算成「昨天」
+          return rpc("arc_daily_summary", { p_athlete: primary.id, p_date: localToday() });
         });
       }
       if (S.orgId) {
@@ -615,7 +630,7 @@
       }
       if (primary) {
         week = await step("RPC · 本周课表 arc_week_plan", function () {
-          return rpc("arc_week_plan", { p_athlete: primary.id, p_any_date: null });
+          return rpc("arc_week_plan", { p_athlete: primary.id, p_any_date: localToday() });
         });
       }
 
@@ -637,11 +652,18 @@
         : S.partial ? "部分数据集读取失败（已按空值呈现，不回填演示数据）" : "已连接真实库";
     } catch (e) {
       if (e.status === 401 || /JWT|jwt/i.test(String(e.message || ""))) {
-        // 会话失效：清干净、弹出登录浮层。此时浮层盖住页面，不会有人误读下面那层。
-        clearSession();
-        S.mode = "demo"; S.stale = false; S.error = null;
-        S.reason = "登录已失效，请重新登录";
-        restoreDemo();
+        // 会话失效。与其它失败一样：不降级成演示数据。
+        // 有上次成功的数据就保留并标注「登录已失效」，没有就明确报错。
+        clearSession(true);
+        if (lastGood) {
+          apply(lastGood);
+          S.mode = "live"; S.stale = true; S.error = null;
+          S.reason = "登录状态已失效，当前显示的是 " + (S.lastSync || "上一次") + " 的数据，请重新登录";
+        } else {
+          S.mode = "error"; S.stale = false;
+          S.error = "登录状态已失效，请重新登录";
+          S.reason = S.error;
+        }
       } else if (lastGood) {
         // 有上一次成功的数据：保留它，明确标注「可能已过期」。
         // 绝不做「刷新失败 → 换成演示数字」这种事，那会让一屏真数据在毫无提示下变假。
@@ -1085,9 +1107,17 @@
   }
 
   /* ── 对外 ───────────────────────────────────────────────────────────── */
+  // 本地日期 YYYY-MM-DD。刻意不用 toISOString()：那是 UTC，北京 0–8 点会退回「昨天」。
+  function localToday() {
+    var d = new Date();
+    var m = d.getMonth() + 1, day = d.getDate();
+    return d.getFullYear() + "-" + (m < 10 ? "0" + m : m) + "-" + (day < 10 ? "0" + day : day);
+  }
+
   var DB = {
     state: S,
     esc: esc,
+    today: localToday,
     configured: function () { return !!(S.url && S.key); },
     isLive: function () { return S.mode === "live" && !!S.session; },
     onChange: onChange,

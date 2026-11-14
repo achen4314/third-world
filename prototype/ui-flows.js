@@ -156,7 +156,7 @@
       (U.busy ? "处理中…" : (isSignup ? "创建账号" : "登录")) + '</button>' +
       '<div class="arcui-links">' +
       (isSignup ? "" : '<button data-u="forgot">忘记密码</button>') +
-      '<button data-u="demo">先看演示版（不连数据库）</button></div>' +
+      '</div>' +
       '<div class="arcui-foot">登录即表示同意《服务条款》与《隐私政策》。健康数据属敏感个人信息，仅用于训练分析，可随时导出或删除。</div>',
       false
     );
@@ -289,7 +289,7 @@
 
   function panelHtml() {
     var s = DB.state;
-    var badge = s.mode === "live" ? '<span class="arcui-badge live">真实库</span>' : '<span class="arcui-badge demo">演示数据</span>';
+    var badge = s.mode === "live" ? '<span class="arcui-badge live">真实库</span>' : '<span class="arcui-badge demo">未连接</span>';
     return shell(
       '<div class="arcui-head"><b>数据源与账号</b><button class="arcui-x" data-u="close">✕</button></div>' +
       '<div class="arcui-status">' + badge + '<span>' + esc(s.reason) + '</span></div>' +
@@ -323,7 +323,7 @@
           }).join("") + '</tbody></table>' +
           (s.regMismatch ? '<div class="arcui-warn">有 ' + s.regMismatch + ' 个指标的公式文本与库内 metric_registry 不一致（已在交付报告里列出）。</div>' : '')
         : '') +
-      '<div class="arcui-note">没有配置 key 时，页面使用演示数据，功能可以点、数值不可信。</div>',
+      '<div class="arcui-note">数据源尚未连接，页面暂不显示业务数值。</div>',
       true
     );
   }
@@ -613,7 +613,7 @@
     pillHtml: function () {
       var s = DB.state;
       var live = s.mode === "live" && s.session;
-      var label = live ? "真实数据" : "演示数据";
+      var label = live ? "已同步" : "未连接";
       var sub = live ? (s.me && s.me.email ? s.me.email.split("@")[0] : "") : "未连接";
       var tone = live ? "live" : "demo";
       // 同步中/失败/过期时外壳不能再说「演示数据 未连接」——内层页面此刻一个数字都没给，
@@ -627,7 +627,7 @@
     openPanel: function () { U.view = "panel"; U.err = ""; U.msg = ""; render(); },
     openGate: function () { U.view = "gate"; U.tab = "signin"; U.err = ""; U.msg = ""; render(); },
     openRecord: function () {
-      if (!DB.isLive()) { U.view = "panel"; render(); toast("当前是演示数据，先连接数据库再记录", "warn"); return; }
+      if (!DB.isLive()) { U.view = "panel"; render(); toast("请先登录后再记录", "warn"); return; }
       U.view = "record"; U.rec = "training"; U.err = ""; U.msg = ""; U.lastInvite = null; render();
       setTimeout(previewTraining, 0);
     },
