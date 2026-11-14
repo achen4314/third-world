@@ -1557,27 +1557,49 @@
       S_note("数据治理四条硬规则", "① 每条样本带 <b>source</b> 与 <b>quality_flag</b>；② 缺测显示「—」，<b>不插值、不补零、不估算、不合并</b>；③ 同一指标多来源在筛选时互斥；④ 每个派生值可下钻到原始样本与公式版本。", "info", 3)
     ], { chips: [dataChip()], actions: [{ label: "＋ 配对设备", sheet: "device", primary: true }, { label: "导入文件", route: "data/import" }] });
 
-    page("data/devices", "设备中心", "哪些设备在线、用什么协议？", "DATA / 设备", [
-      S_metrics([{ label: "已连接", value: "4", delta: "BLE / FTMS / FIT 导入" },
-        { label: "需重连", value: "1", delta: "跑步机 TM-03 · 离线队列 3 条" },
-        { label: "未授权", value: "1", delta: "厂商云端 API · 需开发者授权" },
-        { label: "最高采样率", value: "200", unit: "Hz", delta: "VBT IMU · imu-001" }]),
-      S_cards("已登记设备", "点按查看详情；解绑需二次确认", A.DEVICES.map(d => ({
-        icon: d.kind.indexOf("IMU") >= 0 ? "bolt" : d.kind.indexOf("骑行") >= 0 ? "chart" : "heart",
-        title: d.name, sub: d.kind + " · " + d.proto + " · " + d.rate + " · 最后同步 " + d.last,
-        value: d.status === "online" ? "已连接" : d.status === "warn" ? "需重连" : d.status === "locked" ? "未授权" : "离线",
-        badge: d.status === "online" ? "在线" : d.status === "warn" ? "需关注" : d.status === "locked" ? "需授权" : "离线",
-        badgeTone: d.status === "online" ? "ok" : d.status === "warn" || d.status === "locked" ? "warn" : "mute", sheet: "confirm", sheetId: d.name, tone: d.status === "warn" ? "warn" : ""
-      })), 2),
-      S_flow("设备配对流程", "权限在使用上下文中请求，不在启动时索要", [
-        { t: "扫描 BLE 广播", d: "显示名称 / RSSI / 标准服务 UUID；未授权协议标注「需授权」而非伪造可用" },
-        { t: "确认协议与 characteristic", d: "HR 0x180D/0x2A37 · CPP 0x1818/0x2A63 · FTMS 0x1826/0x2AD2/0x2ACD · RSC 0x1814" },
-        { t: "标定与采样率登记", d: "IMU 需静止段重力估计与 ZUPT 阈值；留空=未标定" },
-        { t: "完成与断连策略", d: "断连进离线缓存队列，恢复后按 device_id + ts_ms 去重回传" }
-      ], 1),
-      S_note("真机差异", "各厂商对 FTMS 的实现存在差异，<b>字节布局须以实现时的官方 GATT 规范文本与真机验证为准</b>；不一致样本标记 quality_flag=suspect 并进质量页，不静默丢弃。", "warn", 3,
-        { label: "打开配对", sheet: "device" })
-    ], { chips: [dataChip()], actions: [{ label: "＋ 配对设备", sheet: "device", primary: true }] });
+    page("data/devices", "设备中心", "哪些设备在线、用什么协议？", "DATA / 设备", (function () {
+      const DV = A.DEVICES || [];
+      const online = DV.filter(d => d.status === "online");
+      const warn = DV.filter(d => d.status === "warn" || d.status === "locked");
+      const offline = DV.filter(d => d.status === "offline");
+      const empty = state.dbLive && DV.length === 0;
+
+      return [
+        empty
+          ? S_metrics([
+              { label: "已连接", value: "0", delta: "库里 devices 表没有这个账号的设备" },
+              { label: "需重连", value: "0", delta: "—", na: true },
+              { label: "未授权", value: "0", delta: "—", na: true },
+              { label: "最高采样率", value: "—", delta: "无设备即无采样率", na: true }
+            ])
+          : S_metrics([
+              { label: "已连接", value: String(online.length), unit: "台", delta: online.length ? "状态 active" : "当前没有在线设备", na: !online.length },
+              { label: "需重连 / 待授权", value: String(warn.length), unit: "台", delta: warn.length ? warn.map(d => d.name).join(" · ") : "无", na: !warn.length },
+              { label: "离线", value: String(offline.length), unit: "台", delta: offline.length ? "last_sync 已过期" : "无", na: !offline.length },
+              { label: "设备总数", value: String(DV.length), unit: "台", delta: "devices 表 · 按创建时间倒序" }
+            ]),
+        DV.length
+          ? S_cards("已登记设备", "点按查看详情；解绑需二次确认", DV.map(d => ({
+              icon: d.kind.indexOf("IMU") >= 0 ? "bolt" : d.kind.indexOf("骑行") >= 0 ? "chart" : "heart",
+              title: d.name, sub: d.kind + " · " + d.proto + " · 最后同步 " + d.last,
+              value: d.status === "online" ? "已连接" : d.status === "warn" ? "需重连" : d.status === "locked" ? "未授权" : "离线",
+              badge: d.status === "online" ? "在线" : d.status === "warn" ? "需关注" : d.status === "locked" ? "需授权" : "离线",
+              badgeTone: d.status === "online" ? "ok" : d.status === "warn" || d.status === "locked" ? "warn" : "mute", sheet: "confirm", sheetId: d.name, tone: d.status === "warn" ? "warn" : ""
+            })), 2)
+          : S_note("还没有配对任何设备", "这一页在真实数据下不会显示示例设备——「4 台已连接」如果在库里是 0 台，那就是假的。" +
+              "<br>要接入数据有三条路：<b>蓝牙直连</b>（心率带 / 功率计 / IMU）、<b>厂商授权 API</b>（COROS / Garmin，见 docs/10 第 8 项）、" +
+              "<b>文件导入</b>（FIT / CSV）。前两条要真机与授权，第三条现在就能用。", "info", 2,
+              { label: "去导入", route: "data/import" }),
+        S_flow("设备配对流程", "权限在使用上下文中请求，不在启动时索要", [
+          { t: "扫描 BLE 广播", d: "显示名称 / RSSI / 标准服务 UUID；未授权协议标注「需授权」而非伪造可用" },
+          { t: "确认协议与 characteristic", d: "HR 0x180D/0x2A37 · CPP 0x1818/0x2A63 · FTMS 0x1826/0x2AD2/0x2ACD · RSC 0x1814" },
+          { t: "标定与采样率登记", d: "IMU 需静止段重力估计与 ZUPT 阈值；留空=未标定" },
+          { t: "完成与断连策略", d: "断连进离线缓存队列，恢复后按 device_id + ts_ms 去重回传" }
+        ], 1),
+        S_note("真机差异", "各厂商对 FTMS 的实现存在差异，<b>字节布局须以实现时的官方 GATT 规范文本与真机验证为准</b>；不一致样本标记 quality_flag=suspect 并进质量页，不静默丢弃。", "warn", 3,
+          { label: "打开配对", sheet: "device" })
+      ];
+    })(), { chips: [dataChip()], actions: [{ label: "＋ 配对设备", sheet: "device", primary: true }] });
 
     page("data/sources", "数据源与授权", "数据来自哪里、授权是否有效？", "DATA / 数据源", [
       S_table("数据源清单", "未取得授权前只使用用户自有文件与手动录入", ["数据源", "状态", "source", "说明"], A.SOURCES.map(s => [
@@ -1665,16 +1687,35 @@
       ];
     })(), { chips: [dataChip()] });
 
-    page("data/metrics", "指标口径 Registry", "每个数字是怎么算出来的？", "DATA / Registry", [
-      S_note("四问准入", "每个指标必须能回答 <b>公式 / 窗口 / 输入 / 证据编号</b>，否则不允许上线。分析页只引用 Registry，不重新定义、不内置第二套公式。", "info", 3),
-      S_table("已登记指标", "点按任意行可下钻到公式版本与原始样本", ["metric_id", "简称", "窗口", "版本", "证据", "有效性规则"], Object.keys(A.METRICS).map(k => [
-        '<button class="chip" data-act="sheet" data-sheet="metric" data-id="' + esc(k) + '">ⓘ ' + esc(k) + '</button>',
-        esc(A.METRICS[k].short), esc(A.METRICS[k].window), esc(A.METRICS[k].version), esc(A.METRICS[k].evidence),
-        '<span class="mini">' + esc(A.METRICS[k].valid) + '</span>'
-      ]), 3),
-      S_table("模块边界表", "防止功能堆叠的结构性约定", ["边界", "A 侧", "B 侧"], A.BOUNDARIES.map(b => [esc(b[0]), '<span class="mini">' + esc(b[1]) + '</span>', '<span class="mini">' + esc(b[2]) + '</span>']), 3),
-      S_note("AWCR 口径声明", "本次确认：<b>AWCR 一律按 ACWR</b>（Acute:Chronic Workload Ratio）处理，不再列为待确认项；Registry 中仅作别名登记，同时提供 rolling 与 EWMA 双口径。若后续给出不同定义，新增独立 metric_id 而不改写既有口径。", "info", 3)
-    ], { chips: [dataChip()] });
+    page("data/metrics", "指标口径 Registry", "每个数字是怎么算出来的？", "DATA / Registry", (function () {
+      const REG = A.REGISTRY || [];
+      if (state.dbLive && REG.length) {
+        // 真实库：口径以 metric_registry 为准，代码常量只是兜底的演示
+        return [
+          S_note("四问准入", "每个指标必须能回答 <b>公式 / 窗口 / 输入 / 证据编号</b>，否则不允许上线。分析页只引用 Registry，不重新定义、不内置第二套公式。" +
+            "<br>下表直接读 <b>metric_registry</b> 表，共 <b>" + REG.length + "</b> 行——在这里改了版本号，页面上每个数的出处就跟着变。", "info", 3),
+          S_table("已登记指标（来自数据库）", "metric_registry · 点左侧按钮可下钻到口径 Sheet", ["metric_id", "名称", "单位", "类别", "计算版本", "公式"], REG.map(r => [
+            '<button class="chip" data-act="sheet" data-sheet="metric" data-id="' + esc(r.id) + '">ⓘ ' + esc(r.id) + '</button>',
+            esc(r.label || "—"), esc(r.unit || "—"), esc(r.category || "—"), esc(r.version),
+            '<span class="mini">' + esc((r.formula || "—").slice(0, 90)) + '</span>'
+          ]), 3, { note: "「计算版本」= calc_version：历史指标行保留它被算出来时的版本，换版本不改写旧值。" }),
+          S_table("模块边界表", "防止功能堆叠的结构性约定", ["边界", "A 侧", "B 侧"], A.BOUNDARIES.map(b => [esc(b[0]), '<span class="mini">' + esc(b[1]) + '</span>', '<span class="mini">' + esc(b[2]) + '</span>']), 3),
+          S_note("AWCR 口径声明", "本次确认：<b>AWCR 一律按 ACWR</b>（Acute:Chronic Workload Ratio）处理，不再列为待确认项；Registry 中仅作别名登记，同时提供 rolling 与 EWMA 双口径。若后续给出不同定义，新增独立 metric_id 而不改写既有口径。", "info", 3)
+        ];
+      }
+      return [
+        S_note("四问准入", "每个指标必须能回答 <b>公式 / 窗口 / 输入 / 证据编号</b>，否则不允许上线。分析页只引用 Registry，不重新定义、不内置第二套公式。" +
+          (state.dbLive ? "<br><b>metric_registry 表是空的</b>：下面这张表来自前端代码常量，不是库里登记的口径——只作演示，不能当作可审计的口径来源。" : ""),
+          "info", 3),
+        S_table("已登记指标", "点按任意行可下钻到公式版本与原始样本", ["metric_id", "简称", "窗口", "版本", "证据", "有效性规则"], Object.keys(A.METRICS).map(k => [
+          '<button class="chip" data-act="sheet" data-sheet="metric" data-id="' + esc(k) + '">ⓘ ' + esc(k) + '</button>',
+          esc(A.METRICS[k].short), esc(A.METRICS[k].window), esc(A.METRICS[k].version), esc(A.METRICS[k].evidence),
+          '<span class="mini">' + esc(A.METRICS[k].valid) + '</span>'
+        ]), 3),
+        S_table("模块边界表", "防止功能堆叠的结构性约定", ["边界", "A 侧", "B 侧"], A.BOUNDARIES.map(b => [esc(b[0]), '<span class="mini">' + esc(b[1]) + '</span>', '<span class="mini">' + esc(b[2]) + '</span>']), 3),
+        S_note("AWCR 口径声明", "本次确认：<b>AWCR 一律按 ACWR</b>（Acute:Chronic Workload Ratio）处理，不再列为待确认项；Registry 中仅作别名登记，同时提供 rolling 与 EWMA 双口径。若后续给出不同定义，新增独立 metric_id 而不改写既有口径。", "info", 3)
+      ];
+    })(), { chips: [dataChip()] });
 
     page("data/profile", "档案与设置", "个体参数与偏好是什么？", "DATA / 档案", (function () {
       if (!state.dbLive) {

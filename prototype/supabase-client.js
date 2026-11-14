@@ -586,6 +586,15 @@
       return String(b.effective_from).localeCompare(String(a.effective_from));
     });
 
+    // 口径 Registry：库里 metric_registry 才是权威版本号与公式，前端不再拿代码常量当口径表
+    arrays.REGISTRY = (d.registry || []).map(function (r) {
+      return {
+        id: r.metric_id, label: r.label, unit: r.unit || "",
+        category: r.category || "", formula: r.formula || "",
+        version: r.calc_version || "—", tier: r.tier || ""
+      };
+    }).sort(function (a, b) { return String(a.id).localeCompare(String(b.id)); });
+
     var ac = (d.cycles || []).filter(function (c) { return c.status === "active"; })[0] ||
              (d.cycles || [])[0] || null;
     arrays.CYCLE_META = ac ? {
@@ -840,8 +849,8 @@
       treadmill: "跑步机", vbt_imu: "VBT IMU", phone: "手机"
     };
     var STATUS = { active: "online", pending: "warn", expired: "offline", revoked: "locked" };
-    if (d.devices.length) {
-      arrays.DEVICES = d.devices.map(function (v) {
+    // 无条件赋值：库里 0 台设备就是 0 台。留空不写会让演示设备顶上来冒充真实配对。
+    arrays.DEVICES = d.devices.map(function (v) {
         return {
           id: v.id,
           name: [v.vendor, v.model].filter(Boolean).join(" ") || KIND[v.kind] || "设备",
@@ -854,11 +863,9 @@
           src: "device"
         };
       });
-    }
 
-    // 审计
-    if (d.audit.length) {
-      arrays.AUDIT = d.audit.map(function (r) {
+    // 审计：同样无条件赋值，空表就是空表
+    arrays.AUDIT = d.audit.map(function (r) {
         var det = r.detail || {};
         return {
           ts: mdOf(r.occurred_at) + " " + String(r.occurred_at).slice(11, 16),
@@ -869,7 +876,6 @@
           rid: r.request_id || "—"
         };
       });
-    }
 
     // 口径：以 registry 为唯一真源比对，不一致只报数、不静默覆盖（避免文档与库各说各话）
     S.regMismatch = 0;
