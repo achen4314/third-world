@@ -161,7 +161,8 @@ async function status() {
 const ACTIONS = {
   "healthcheck": ["systemctl", ["is-active", "arc-admin", "caddy"]],
   "proxy-test": ["caddy", ["validate", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]],
-  "reload-proxy": ["systemctl", ["reload-or-restart", "caddy"]],
+  // 进程是低权限用户 arcadmin，只有这一条被 sudoers 白名单放行（见 install.sh）
+  "reload-proxy": ["sudo", ["-n", "systemctl", "reload-or-restart", "caddy"]],
   "reload-nginx": ["systemctl", ["reload", "nginx"]],
   "restart-app": ["systemctl", ["restart", "arc-admin"]],
   "nginx-test": ["nginx", ["-t"]],

@@ -67,12 +67,27 @@ if [[ "$MEM_AVAIL_MB" -lt 300 ]]; then
   warn "可用内存只有 ${MEM_AVAIL_MB}MB（Dify 占了不少）：装完请盯一下 free -m，必要时给 Caddy 加 memory 限制"
 fi
 
-echo "── 1/7 目录与权限 ─────────────────────────────────"
+# ── 0.5 部署前取证：把「别人的东西长什么样」存下来 ──────────
+# 全部只读。部署完会用同一套指标再拍一次，逐项比对，证明没碰另一个挂载点。
+if [[ -f "$ROOT/deploy/guard-dify.sh" ]]; then
+  bash "$ROOT/deploy/guard-dify.sh" snapshot before
+else
+  warn "找不到 guard-dify.sh：跳过部署前取证（建议不要跳过）"
+fi
+
+echo "── 1/7 目录、专用用户与权限 ───────────────────────"
 install -d -m 755 "$ROOT/deploy/runtime"
 install -d -m 750 /etc/arc-training
+# 专用低权限用户：即使控制台被攻破，也读写不到别人的文件（Dify 属 root/docker）
+if ! id arcadmin >/dev/null 2>&1; then
+  useradd --system --no-create-home --shell /usr/sbin/nologin arcadmin
+  green "    ✓ 已创建专用用户 arcadmin（nologin）"
+fi
+usermod -aG systemd-journal arcadmin 2>/dev/null || true
+chown -R arcadmin:arcadmin "$ROOT/prototype" "$ROOT/deploy/runtime"
 chmod 755 "$ROOT" "$ROOT/prototype"
 chmod 644 "$ROOT"/prototype/*.js "$ROOT"/prototype/*.html "$ROOT"/prototype/*.css 2>/dev/null || true
-green "    ✓ $ROOT 就绪"
+green "    ✓ $ROOT 就绪（属主 arcadmin，root 只读）"
 
 echo "── 2/7 后台口令 ───────────────────────────────────"
 umask 077
@@ -104,6 +119,13 @@ fi
 
 echo "── 4/7 控制台服务 ─────────────────────────────────"
 sed -e "s#__NODE__#$NODE_BIN#" "$ROOT/deploy/arc-admin.service" > /etc/systemd/system/arc-admin.service
+# 只授权一条命令：重载门面。不给 sudo 全权，也不给 systemctl 通配。
+cat > /etc/sudoers.d/arc-admin <<'SUDO'
+# 第三世界控制台：仅允许重载 Caddy（用于后台「重载门面」按钮）
+arcadmin ALL=(root) NOPASSWD: /usr/bin/systemctl reload-or-restart caddy, /usr/bin/systemctl status caddy
+SUDO
+chmod 440 /etc/sudoers.d/arc-admin
+visudo -c -f /etc/sudoers.d/arc-admin >/dev/null 2>&1 || { rm -f /etc/sudoers.d/arc-admin; die "sudoers 校验失败，已回滚该文件"; }
 systemctl daemon-reload
 systemctl enable arc-admin >/dev/null 2>&1
 systemctl restart arc-admin
@@ -164,7 +186,14 @@ else
   probe "静态站 /"              "http://127.0.0.1:8080/"
 fi
 
-echo "── 7/7 下一步提示 ─────────────────────────────────"
+echo "── 7/8 取证比对：确认没有打扰另一个挂载点 ─────────"
+if [[ -f "$ROOT/deploy/guard-dify.sh" ]]; then
+  bash "$ROOT/deploy/guard-dify.sh" snapshot after
+  bash "$ROOT/deploy/guard-dify.sh" diff before after
+  echo "    （若显示「全部一致」，即可认定 Dify 侧毫发无损；80 端口内容不变是关键证据）"
+fi
+
+echo "── 8/8 下一步提示 ─────────────────────────────────"
 PUBIP=$(curl -s --max-time 6 https://api.ipify.org 2>/dev/null || echo "?")
 echo "    本机公网 IP：$PUBIP"
 RESOLVED=$(getent ahostsv4 "$DOMAIN" 2>/dev/null | awk 'NR==1{print $1}')
