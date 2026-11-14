@@ -852,4 +852,8 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 12px; min-width: 
   .arc-pill span { display: none; }
 }
 .chip.live { color: color-mix(in srgb, var(--green) 78%, var(--text-1)); border-color: color-mix(in srgb, var(--green) 38%, transparent); }
+/* 本机覆盖：这条提示存在的唯一理由是防止「以为在看真库、其实在跟 mock 说话」 */
+.chip.warn { color: #a06000; border-color: rgba(255, 149, 0, .38); background: rgba(255, 149, 0, .10); cursor: pointer; }
+:root[data-theme="dark"] .chip.warn { color: #ffb340; }
+.chip.warn:hover { background: rgba(255, 149, 0, .16); }
 .console .demo-tag.live { color: color-mix(in srgb, var(--green) 82%, #0a3d24); background: color-mix(in srgb, var(--green) 15%, transparent); border-color: color-mix(in srgb, var(--green) 34%, transparent); }

@@ -11,7 +11,7 @@
  */
 window.ARC_ENV = {
   SUPABASE_URL: "https://bffuuxdnztowlwbxjlzp.supabase.co",
-  SUPABASE_PUBLISHABLE_KEY: "",
+  SUPABASE_PUBLISHABLE_KEY: "sb_publishable_ccxC5xPgM_Gq6kqAIUb6-A_4-OokJoa",
   // 允许在运行时粘贴 key（本机调试用）。上线打包时置 false，只认上面那一行。
   ALLOW_RUNTIME_KEY: true
 };

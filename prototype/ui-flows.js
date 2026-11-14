@@ -53,6 +53,11 @@
     // 认证类：这几条直接决定用户下一步做什么，必须说人话
     if (/invalid login credentials|invalid_credentials/i.test(m)) return "邮箱或密码不正确。";
     if (/email not confirmed/i.test(m)) return "邮箱还没确认：请点邮件里的确认链接；没收到就让管理员在后台确认账号。";
+    // 这条是「整个登录方式被关掉」，不是密码错：不翻译的话用户会一直怀疑密码
+    if (/email logins? (are )?disabled|email provider.*disabled/i.test(m)) {
+      return "这个项目没有开启「邮箱登录」：Dashboard → Authentication → Sign In / Providers → Email → 打开 Enable Email provider，刷新后重试（docs/10 第 3 项）。";
+    }
+    if (/phone logins? (are )?disabled/i.test(m)) return "项目没开手机号登录：需要先配短信服务商、签名与模板（docs/10 第 6 项）。";
     if (/user not found/i.test(m)) return "这个邮箱还没有注册。";
     if (/invalid api key|no apikey|apikey.*invalid/i.test(m)) return "publishable key 无效：检查是否完整复制（在「数据源」里重填）。";
     if (/rate limit|too many requests/i.test(m)) return "请求太频繁，请稍等一会儿再试。";
@@ -116,10 +121,26 @@
 
   function gateHtml() {
     var isSignup = U.tab === "signup";
+    var s = DB.state || {};
+    var host = "";
+    try { host = s.url ? new URL(s.url).host : ""; } catch (e) { host = s.url || ""; }
+    // 登录前就把「要连哪个库」说出来：地址被本机覆盖成 mock 时，这里会立刻暴露，
+    // 而不是等登录成功后看到一堆熟悉但其实是假的数据。
+    var target =
+      '<div class="arcui-hint" style="display:flex;gap:8px;align-items:center;justify-content:space-between">' +
+      '<span>' + (host ? "连接目标 · <b>" + esc(host) + "</b>" : "未配置后端地址") + '</span>' +
+      (s.override
+        ? '<button data-u="clear-override" style="color:#a06000;text-decoration:underline">清除本机覆盖</button>'
+        : "") +
+      '</div>';
+    var noKey = !s.key
+      ? '<div class="arcui-err">没有 publishable key，登录无法进行。在 prototype/env.js 填 SUPABASE_PUBLISHABLE_KEY 后刷新（见 docs/10）。</div>'
+      : "";
     return shell(
       '<div class="arcui-brand"><div class="arcui-mark">第</div><div>' +
       '<div class="arcui-title">第三世界</div>' +
       '<div class="arcui-sub">训练负荷 · 恢复 · 力量速度</div></div></div>' +
+      target + noKey +
       '<div class="arcui-tabs">' +
       '<button class="' + (!isSignup ? "on" : "") + '" data-u="tab" data-v="signin">登录</button>' +
       '<button class="' + (isSignup ? "on" : "") + '" data-u="tab" data-v="signup">注册</button></div>' +
@@ -382,6 +403,12 @@
           toast("已登录");
         }
         render();
+        return;
+      }
+      if (u === "clear-override") {
+        // 在登录浮层里也能清：否则「连错库」的人被困在登录框里，点不到被遮住的标签
+        await DB.clearConfig();
+        location.reload();
         return;
       }
       if (u === "signout") { await DB.signOut(); U.view = null; U.err = ""; U.msg = ""; render(); return; }

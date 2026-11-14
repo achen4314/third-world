@@ -164,6 +164,11 @@
     const X = i => pad.l + (n === 1 ? 0 : i / (n - 1)) * iw;
     const Y = v => pad.t + ih - (v - min) / (max - min) * ih;
     let s = grid(W, H, pad, min, max, c.labels);
+    // 负区间的零线：TSB 为负时没有零线，读图的人分不清「在下半区」和「贴着底」
+    if (c.zeroLine && min < 0 && max > 0) {
+      const y0 = Y(0).toFixed(1);
+      s += '<line x1="' + pad.l + '" y1="' + y0 + '" x2="' + (W - pad.r) + '" y2="' + y0 + '" stroke="var(--border-2)" stroke-width="1" stroke-dasharray="3 3"/>';
+    }
     (c.bands || []).forEach(b => {
       const y0 = Y(b.to), y1 = Y(b.from);
       s += '<rect x="' + pad.l + '" y="' + Math.min(y0, y1).toFixed(1) + '" width="' + iw + '" height="' + Math.abs(y1 - y0).toFixed(1) + '" fill="' + b.color + '" opacity=".5"/>';
@@ -449,12 +454,23 @@
   }
   function chartLoadTrend() {
     const r = load();
-    return { kind: "line", labels: A.DATES, min: -20, max: 170,
+    // 刻度必须跟着数据走：写死 -20…170 在真实库上（CTL 常在 20–60）会把三条线压成贴底的直线，
+    // 看起来像「负荷一直很低」，而其实只是坐标轴没量程。
+    const vals = [];
+    r.forEach(x => [x.ctl, x.atl, x.tsb].forEach(v => { if (v !== null && v !== undefined && isFinite(v)) vals.push(Number(v)); }));
+    let min = 0, max = 100;
+    if (vals.length) {
+      min = Math.min(0, Math.floor(Math.min.apply(null, vals) - 5));   // TSB 会为负，必须留出下半区
+      max = Math.ceil(Math.max.apply(null, vals) + 5);
+      if (max - min < 20) max = min + 20;
+    }
+    return { kind: "line", labels: A.DATES, min: min, max: max,
       series: [
         { name: "CTL", values: r.map(x => x.ctl), color: "var(--blue)", width: 2.2, fill: true },
         { name: "ATL", values: r.map(x => x.atl), color: "var(--orange)", width: 1.8 },
         { name: "TSB", values: r.map(x => x.tsb), color: "var(--indigo)", width: 1.6, dash: true }
-      ] };
+      ],
+      zeroLine: min < 0 };
   }
   function hrvBaseline() {
     // 基线只能由真实测得的 RMSSD 求：没有数据就不给基线，不拿常数顶上
@@ -501,7 +517,12 @@
     ] };
   }
   function chartVL() {
-    return { kind: "bars", labels: A.VBT_SETS.map(s => s.load + "kg"), values: A.VBT_SETS.map(s => s.vl), color: "var(--orange)", min: 0, max: 30 };
+    // 只画真的算出 VL 的组。vl 为 null 的组画进去等于显示「速度损失 0%」，那是编出来的值。
+    const sets = (A.VBT_SETS || []).filter(s => s.vl !== null && s.vl !== undefined && isFinite(s.vl));
+    if (!sets.length) return null;
+    const top = Math.max.apply(null, sets.map(s => Number(s.vl)));
+    return { kind: "bars", labels: sets.map(s => fmt(s.load, 0) + "kg"), values: sets.map(s => Number(s.vl)),
+      color: "var(--orange)", min: 0, max: Math.max(15, Math.ceil(top * 1.35)) };
   }
   function chartJump() {
     const picks = A.JUMPS.filter(j => j.tf !== null).slice(0, 6).reverse();
@@ -513,6 +534,15 @@
     return { kind: "bars", labels: A.ATHLETES.map(a => a.name.replace(" ", "")), values: _v, color: "var(--indigo)", min: 0, max: Math.max(200, Math.ceil(Math.max.apply(null, _v.concat([0])) * 1.15)) };
   }
   function chartRepVelocity() {
+    // 真实库里我们只有「每组一次」的 MPV（vbt_sets 一行一组），没有逐次重复流。
+    // 所以连真库时画「各组 MPV」并改标题，而不是拿 6 个假的 rep 值冒充实时流。
+    const sets = (A.VBT_SETS || []).filter(s => s.mpv !== null && s.mpv !== undefined && isFinite(s.mpv));
+    if (sets.length) {
+      const top = Math.max.apply(null, sets.map(s => Number(s.mpv)));
+      return { kind: "bars", labels: sets.map(s => fmt(s.load, 0) + "kg"), values: sets.map(s => Number(s.mpv)),
+        color: "var(--accent)", min: 0, max: Math.ceil((top + 0.1) * 10) / 10 };
+    }
+    if (state.dbLive) return null;   // 没有采集记录就不画，空框会被读成「速度全为 0」
     return { kind: "bars", labels: ["R1", "R2", "R3", "R4", "R5", "R6"], values: [0.72, 0.70, 0.67, 0.63, 0.59, 0.55], color: "var(--accent)", min: 0, max: 0.9 };
   }
 
@@ -522,9 +552,15 @@
   }
   // 数据来源标签：连了真库就不能再挂「DEMO 演示数据」，那会让人误判眼前数字的性质
   function dataChip() {
-    return state.dbLive
+    // 本机覆盖：以前用 ?sburl= 试连过 mock，地址会留在 localStorage 里。
+    // 不说出来的话，页面会一边挂「真实数据」一边跟 mock 说话——那比显示 DEMO 更危险。
+    const ov = (window.ARC_DB && window.ARC_DB.state && window.ARC_DB.state.override) || null;
+    const ovChip = ov
+      ? '<button class="chip warn" data-act="clear-override" title="本机存储的 ' + esc(ov.field) + ' 覆盖了 env.js">本机覆盖 · ' + esc(ov.field) + ' · 点此清除</button>'
+      : "";
+    return (state.dbLive
       ? '<span class="chip live">真实数据 · RLS 生效</span>'
-      : '<span class="chip demo">DEMO 演示数据</span>';
+      : '<span class="chip demo">DEMO 演示数据</span>') + ovChip;
   }
   const curWindow = () => (window.ARC_LIVE ? window.ARC_LIVE.state.window : state.params.window);
   const analyzeChips = () => [
@@ -957,37 +993,62 @@
       S_note("分析 ↔ 数据看板边界", "<b>analyze/*</b> 是单运动员、长周期、可下钻到原始样本、可切换口径；<b>admin/overview</b> 是多运动员聚合、只读、最多下钻到成员页。看板不显示样本级数据，也不允许改口径。", "info", 3)
     ], { chips: analyzeChips() });
 
-    page("analyze/load", "负荷与周期", "长期 / 短期负荷与风险如何演变？", "ANALYZE / 负荷", [
-      S_metrics([
-        { label: "CTL 长期负荷", value: fmt(L().ctl, 1), delta: "42 日 EWMA", metricId: "ctl", win: "42 日", src: "device" },
-        { label: "ATL 短期负荷", value: fmt(L().atl, 1), delta: "7 日 EWMA", metricId: "atl", win: "7 日", src: "device" },
-        { label: "TSB 负荷平衡", value: fmt(L().tsb, 1), delta: "前一日差值口径", metricId: "tsb", win: "日", src: "device" },
-        { label: "ACWR (EWMA)", value: fmt(L().ewma, 2), delta: "推荐主口径", metricId: "acwr.ewma", win: "EWMA", src: "device" },
-        { label: "ACWR (rolling)", value: L().rolling === null ? "—" : fmt(L().rolling, 2), delta: L().rolling === null ? "不可计算 · 有效天数不足" : "7/28 日 rolling", metricId: "acwr.rolling", win: "7 / 28 日", src: "device", na: L().rolling === null },
-        { label: "TM 单调性", value: L().tm === null ? "—" : fmt(L().tm, 2), delta: L().tm === null ? "不可计算 · 有效天数 5/7" : "7 日窗口", metricId: "tm", win: "7 日", src: "device", na: L().tm === null },
-        { label: "TS 训练压力", value: L().ts === null ? "—" : fmt(L().ts, 0), delta: L().ts === null ? "不可计算 · TM 不可计算" : "sum(TL,7d) × TM", metricId: "ts", win: "7 日", src: "device", na: L().ts === null },
-        { label: "有效天数", value: L().v28 + "/28", delta: "缺测 2 天 · 显示「—」", go: "data/quality" }
-      ]),
-      S_chart("CTL / ATL / TSB", "28 日 · TL 口径 " + state.params.tl.toUpperCase() + " · 来源 device/import/manual", chartLoadTrend(), 2,
+    page("analyze/load", "负荷与周期", "长期 / 短期负荷与风险如何演变？", "ANALYZE / 负荷", (function () {
+      const LIVE = state.dbLive;
+      // 连真库时这些数是 daily_metrics 里由触发器算好落库的，不是「设备直采」——
+      // 标成 device 会让人以为是设备自己算的。有 TL 的天数则按窗口实算，不写死「缺测 2 天」。
+      const SRC = LIVE ? "服务端" : "device";
+      const win = load().slice(-14);
+      const haveTL = win.filter(r => r.tl !== null && r.tl !== undefined).length;
+      const last = L() || {};
+      const missingIn7 = load().slice(-7).filter(r => r.tl === null || r.tl === undefined).length;
+
+      const out = [];
+      out.push(S_metrics([
+        { label: "CTL 长期负荷", value: fmt(last.ctl, 1), delta: "42 日 EWMA", metricId: "ctl", win: "42 日", src: SRC },
+        { label: "ATL 短期负荷", value: fmt(last.atl, 1), delta: "7 日 EWMA", metricId: "atl", win: "7 日", src: SRC },
+        { label: "TSB 负荷平衡", value: fmt(last.tsb, 1), delta: "前一日差值口径", metricId: "tsb", win: "日", src: SRC },
+        { label: "ACWR (EWMA)", value: fmt(last.ewma, 2), delta: "推荐主口径", metricId: "acwr.ewma", win: "EWMA", src: SRC },
+        { label: "ACWR (rolling)", value: last.rolling === null || last.rolling === undefined ? "—" : fmt(last.rolling, 2), delta: last.rolling === null || last.rolling === undefined ? "不可计算 · 窗口有效天数不足" : "7/28 日 rolling", metricId: "acwr.rolling", win: "7 / 28 日", src: SRC, na: last.rolling === null || last.rolling === undefined },
+        { label: "TM 单调性", value: last.tm === null || last.tm === undefined ? "—" : fmt(last.tm, 2), delta: last.tm === null || last.tm === undefined ? "不可计算 · 7 日有效天不足" : "7 日窗口", metricId: "tm", win: "7 日", src: SRC, na: last.tm === null || last.tm === undefined },
+        { label: "TS 训练压力", value: last.ts === null || last.ts === undefined ? "—" : fmt(last.ts, 0), delta: last.ts === null || last.ts === undefined ? "不可计算 · 依赖 TM" : "sum(TL,7d) × TM", metricId: "ts", win: "7 日", src: SRC, na: last.ts === null || last.ts === undefined },
+        { label: "近 14 日有记录", value: haveTL + "/14", delta: LIVE ? (14 - haveTL) + " 天无训练（不是缺测）" : "缺测 · 显示「—」", go: "data/quality" }
+      ]));
+
+      out.push(S_chart("CTL / ATL / TSB", "近 28 日 · TL 口径 " + state.params.tl.toUpperCase() + " · 来源 " + (LIVE ? "daily_metrics（服务端计算）" : "device/import/manual"), chartLoadTrend(), 2,
         { drillId: "ctl", legend: [{ name: "CTL 42 日", color: "var(--blue)" }, { name: "ATL 7 日", color: "var(--orange)" }, { name: "TSB", color: "var(--indigo)" }],
-          note: "TSB 采用前一日 CTL−ATL 差值口径，避免当日稀释；口径在口径 Sheet 内固定并展示。" }),
-      S_chart("ACWR 双口径对照", "rolling 与 EWMA 并列，不单独给「甜蜜区间」结论", { kind: "gauge", items: [
-        { name: "EWMA", value: L().ewma, sub: "λ=2/(7+1)、2/(28+1)", color: "var(--accent)" },
-        { name: "rolling 7/28", value: L().rolling, sub: "急性窗含于慢性窗", color: "var(--indigo)" }] }, 1,
-        { drillId: "acwr.ewma", note: "浅色弧为 0.80–1.30 参考区间；颜色不表示好坏，结论由规则文字给出。" }),
-      S_note("数据充分性演示", state.injectMissing
-        ? "已<b>注入 2 天缺测</b>（近 7 日内）：7 日有效天 5/7 → <b>TM / TS / ACWR rolling 返回「—」</b>， EWMA 保留数值但标注有效天数不足。缺测不补 0、不插值、不估算。"
-        : "点按右侧按钮可<b>注入 2 天缺测</b>，现场验证：有效天数不足时窗口指标返回「不可计算」，而不是 0 或估算值。", state.injectMissing ? "warn" : "info", 2,
-        state.injectMissing ? { label: "恢复完整数据", sheet: "toggle-missing" } : { label: "注入缺测（演示）", sheet: "toggle-missing" }),
-      S_cards("规则引擎依据", "点按查看输入值 / 阈值 / 版本", Object.keys(A.RULES).map(k => ({ icon: "check", title: k + " · " + A.RULES[k].title, sub: A.RULES[k].input, value: A.RULES[k].action, sheet: "rule", sheetId: k })), 1),
-      S_table("近 8 日 daily_load", "每行可回溯公式版本与有效天数", ["日期", "TL", "CTL", "ATL", "TSB", "ACWR EWMA", "ACWR rolling", "TM", "TS", "有效天"], load().slice(-8).reverse().map(r => [
+          note: "TSB 采用前一日 CTL−ATL 差值口径，避免当日稀释；纵轴按实际量程自适应，TSB 为负时画零线。" }));
+
+      out.push(S_chart("ACWR 双口径对照", "rolling 与 EWMA 并列，不单独给「甜蜜区间」结论", { kind: "gauge", items: [
+        { name: "EWMA", value: last.ewma, sub: "λ=2/(7+1)、2/(28+1)", color: "var(--accent)" },
+        { name: "rolling 7/28", value: last.rolling, sub: "急性窗含于慢性窗", color: "var(--indigo)" }] }, 1,
+        { drillId: "acwr.ewma", note: "浅色弧为 0.80–1.30 参考区间；颜色不表示好坏，结论由规则文字给出。" }));
+
+      out.push(LIVE
+        // 真库上不摆「注入缺测」的演示开关：那会在真实数据里制造假缺口，让指标凭空变成「—」
+        ? S_note("数据充分性", "近 7 日有 " + (7 - missingIn7) + "/7 天有训练负荷记录。窗口指标在有效天不足时<b>返回「—」</b>，" +
+            "不补 0、不插值；「今天没练」和「那天数据没进来」是两件事，前者不该算缺测。", missingIn7 ? "warn" : "info", 2,
+            { label: "查看缺口明细", route: "data/quality" })
+        : S_note("数据充分性演示", state.injectMissing
+          ? "已<b>注入 2 天缺测</b>（近 7 日内）：7 日有效天 5/7 → <b>TM / TS / ACWR rolling 返回「—」</b>， EWMA 保留数值但标注有效天数不足。缺测不补 0、不插值、不估算。"
+          : "点按右侧按钮可<b>注入 2 天缺测</b>，现场验证：有效天数不足时窗口指标返回「不可计算」，而不是 0 或估算值。", state.injectMissing ? "warn" : "info", 2,
+          state.injectMissing ? { label: "恢复完整数据", sheet: "toggle-missing" } : { label: "注入缺测（演示）", sheet: "toggle-missing" }));
+
+      out.push(S_cards("规则引擎依据", "点按查看输入值 / 阈值 / 版本", Object.keys(A.RULES).map(k => ({ icon: "check", title: k + " · " + A.RULES[k].title, sub: A.RULES[k].input, value: A.RULES[k].action, sheet: "rule", sheetId: k })), 1));
+
+      out.push(S_table("近 8 日 daily_load", LIVE ? "直接读 daily_metrics，前端不重算" : "每行可回溯公式版本与有效天数",
+        ["日期", "TL", "CTL", "ATL", "TSB", "ACWR EWMA", "ACWR rolling", "TM", "TS", "有效天"], load().slice(-8).reverse().map(r => [
         esc(r.date), r.tl === null ? "—" : fmt(r.tl, 0), fmt(r.ctl, 1), fmt(r.atl, 1), fmt(r.tsb, 1), fmt(r.ewma, 2),
         r.rolling === null ? '<span class="mini">— 不可计算</span>' : fmt(r.rolling, 2),
         r.tm === null ? '<span class="mini">— 不可计算</span>' : fmt(r.tm, 2),
         r.ts === null ? "—" : fmt(r.ts, 0), r.v7 + "/7"
-      ]), 3, { note: "计算在原型内真实执行：TL → EWMA CTL/ATL → TSB → ACWR 双口径 → TM/TS。用例 2/3/4/7 可直接核验。" }),
-      S_note("分析页边界", "本页<b>只读</b>：不提供录入控件、不显示团队聚合。需要写入进 <b>lab/*</b> 或 <b>data/import</b>；需要团队视图进 <b>教练工作台 · 数据看板</b>。", "", 3)
-    ], { chips: analyzeChips(), actions: [{ label: "窗口与口径", sheet: "window" }, { label: "查看周期计划", route: "train/plan", primary: true }] });
+      ]), 3, { note: LIVE
+        ? "数值来自 <b>daily_metrics</b>：写入 activities / 恢复数据时由数据库触发器算好落库，前端只渲染。这样「App 里的数」和「导出的数」不会是两个数。"
+        : "计算在原型内真实执行：TL → EWMA CTL/ATL → TSB → ACWR 双口径 → TM/TS。用例 2/3/4/7 可直接核验。" }));
+
+      out.push(S_note("分析页边界", "本页<b>只读</b>：不提供录入控件、不显示团队聚合。需要写入进 <b>lab/*</b> 或 <b>data/import</b>；需要团队视图进 <b>教练工作台 · 数据看板</b>。", "", 3));
+      return out;
+    })(), { chips: analyzeChips(), actions: [{ label: "窗口与口径", sheet: "window" }, { label: "查看周期计划", route: "train/plan", primary: true }] });
 
     page("analyze/recovery", "恢复与睡眠", "恢复是否偏离个人基线？", "ANALYZE / 恢复", (function () {
       const LIVE = state.dbLive;
@@ -2513,6 +2574,12 @@
     if (a === "arc-record") { if (window.ARC_UI) window.ARC_UI.openRecord(); return; }
     if (a === "download-csv") { downloadCsv(el.dataset.kind); return; }
     if (a === "assign") { assignTemplate(el.dataset.id); return; }
+    if (a === "clear-override") {
+      if (window.ARC_DB) { window.ARC_DB.clearConfig(); }
+      toast("已清除本机覆盖，正在按 env.js 重新连接", "info");
+      setTimeout(function () { location.reload(); }, 400);
+      return;
+    }
     if (a === "activate-rule") { activateRule(el.dataset.id); return; }
     if (a === "db-panel") { if (window.ARC_UI) window.ARC_UI.openPanel(); return; }
     if (state.dbLive && (a === "live-toggle" || a === "live-refresh")) {

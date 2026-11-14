@@ -26,6 +26,7 @@
     reason: "尚未初始化",
     url: "",
     key: "",
+    override: null,      // 本机覆盖（localStorage 里与 env.js 不一致的值），要在界面上说出来
     session: null,
     me: null,            // { id, email, display_name }
     role: null,          // 库内 app_role
@@ -946,18 +947,36 @@
       demoSnapshot = JSON.parse(JSON.stringify(window.ARC));
 
       var env = window.ARC_ENV || {};
-      var url = env.SUPABASE_URL || "";
-      var key = env.SUPABASE_PUBLISHABLE_KEY || "";
+      var envUrl = String(env.SUPABASE_URL || "").replace(/\/+$/, "");
+      var envKey = String(env.SUPABASE_PUBLISHABLE_KEY || "").trim();
+      var url = envUrl;
+      var key = envKey;
+      S.override = null;
+
       if (env.ALLOW_RUNTIME_KEY !== false) {
+        var isLocal = location.hostname === "localhost" || location.hostname === "127.0.0.1" || location.hostname === "";
+        var sp = new URLSearchParams(location.search);
+
+        // ?reset=1：清掉以前用 ?sburl=/?sbkey= 试连时留下的本机覆盖。
+        // 没有这个开关，一个指向 mock 的地址会永久留在 localStorage 里，之后每次打开
+        // 页面都在跟 mock 说话，界面却挂着「真实数据」——这是最坏的一种错。
+        if (isLocal && sp.get("reset") === "1") {
+          lsSet(LS_URL, null); lsSet(LS_KEY, null);
+        }
+
         url = lsGet(LS_URL) || url;
         key = lsGet(LS_KEY) || key;
+
         // 仅本机回环地址允许用 ?sbkey= 快速试连，避免线上被人用参数指向别的后端
-        var isLocal = location.hostname === "localhost" || location.hostname === "127.0.0.1" || location.hostname === "";
         if (isLocal) {
-          var sp = new URLSearchParams(location.search);
           if (sp.get("sburl")) { lsSet(LS_URL, sp.get("sburl")); url = sp.get("sburl"); }
           if (sp.get("sbkey")) { lsSet(LS_KEY, sp.get("sbkey")); key = sp.get("sbkey"); }
         }
+
+        // 本机覆盖与 env.js 不一致时，不静默采用：记下来由界面显式挂一个「本机覆盖」标签，
+        // 否则用户以为在看 env.js 配的那个库。
+        if (envUrl && url && String(url).replace(/\/+$/, "") !== envUrl) S.override = { field: "URL", value: url };
+        else if (envKey && key && key !== envKey) S.override = { field: "key", value: String(key).slice(0, 22) + "…" };
       }
       S.url = String(url || "").replace(/\/+$/, "");
       S.key = String(key || "").trim();
@@ -1017,7 +1036,7 @@
     clearConfig: function () {
       lsSet(LS_URL, null); lsSet(LS_KEY, null); lsSet(LS_SESS, null);
       clearSession();
-      S.url = ""; S.key = "";
+      S.url = ""; S.key = ""; S.override = null;
       restoreDemo();
       S.mode = "demo"; S.reason = "已清除本机连接配置";
       emit();

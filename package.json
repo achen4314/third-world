@@ -26,7 +26,8 @@
     "db:0011": "node tools/apply-sql.mjs supabase/migrations/20261114000011_state_vs_daily.sql",
     "accounts": "node tools/accounts.mjs list",
     "seed:demo": "node tools/seed-demo.mjs",
-    "q": "node tools/q.mjs"
+    "q": "node tools/q.mjs",
+    "set:key": "node tools/set-key.mjs"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.2.0",
