@@ -615,7 +615,13 @@
       var live = s.mode === "live" && s.session;
       var label = live ? "真实数据" : "演示数据";
       var sub = live ? (s.me && s.me.email ? s.me.email.split("@")[0] : "") : "未连接";
-      return '<button class="arc-pill ' + (live ? "live" : "demo") + '" data-act="db-panel" title="' +
+      var tone = live ? "live" : "demo";
+      // 同步中/失败/过期时外壳不能再说「演示数据 未连接」——内层页面此刻一个数字都没给，
+      // 外壳却写成 DEMO，会让人以为自己在看演示。
+      if (s.syncing) { label = "同步中"; sub = "暂不显示数值"; }
+      else if (s.mode === "error" || s.error) { label = "数据未加载"; sub = "点此诊断"; }
+      else if (s.stale) { label = "数据可能过期"; sub = s.lastSync || ""; }
+      return '<button class="arc-pill ' + tone + '" data-act="db-panel" title="' +
         esc(s.reason) + '"><i></i>' + label + (sub ? '<span>' + esc(sub) + '</span>' : "") + '</button>';
     },
     openPanel: function () { U.view = "panel"; U.err = ""; U.msg = ""; render(); },

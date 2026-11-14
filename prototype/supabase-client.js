@@ -22,7 +22,7 @@
   var ROLE_RANK = ["org_admin", "team_admin", "clinician", "coach", "analyst", "athlete", "observer"];
 
   var S = {
-    mode: "demo",        // demo | live
+    mode: "demo",        // demo | live | error（error = 有会话但数据没落地，界面不显示任何数值）
     reason: "尚未初始化",
     url: "",
     key: "",
@@ -38,7 +38,11 @@
     primaryAthlete: null,
     lastSync: null,
     busy: false,
+    syncing: false,      // 已登录、数据尚未落地。此时页面渲染骨架，绝不渲染演示数值
+    stale: false,        // 本次刷新失败，但保留上一次成功的数据（明确标注时间）
+    error: null,         // 有会话却拿不到数据：给原因 + 重试入口，不给假数字
     partial: false,
+    truncated: false,    // PostgREST 返回行数小于总行数：有窗口被截断
     queries: [],
     counts: {},
     regMismatch: 0,
@@ -48,6 +52,7 @@
 
   var subs = [];
   var demoSnapshot = null;
+  var lastGood = null;   // 上一次成功落地的 payload；加载失败时用它保底，而不是退回演示常量
 
   /* ── 工具 ───────────────────────────────────────────────────────────── */
   function esc(v) {
@@ -84,6 +89,21 @@
    * 那种回退很隐蔽：页面看起来正常，数字全是假的。 */
   function asArr(v) { return Array.isArray(v) ? v : (v ? [v] : []); }
   function emit() {
+    // 先同步渲染层状态，再通知订阅者：ui-flows 的 sync() 会在订阅回调里立刻重渲染，
+    // 顺序反了就会用旧状态画一帧（错误页还来不及出现）。
+    if (window.ARC_DB_STATUS) {
+      try {
+        window.ARC_DB_STATUS({
+          live: S.mode === "live",
+          syncing: S.syncing,
+          stale: S.stale,
+          error: S.error,
+          truncated: S.truncated,
+          lastSync: S.lastSync,
+          reason: S.reason
+        });
+      } catch (e) { /* noop */ }
+    }
     subs.forEach(function (f) { try { f(S); } catch (e) { /* 单个订阅者失败不影响其它 */ } });
     try { document.dispatchEvent(new CustomEvent("arc:db", { detail: S })); } catch (e) { /* noop */ }
   }
@@ -133,7 +153,16 @@
       e2.body = text;
       throw e2;
     }
-    return text ? JSON.parse(text) : null;
+    var out = text ? JSON.parse(text) : null;
+    // Prefer: count=exact → Content-Range: 0-503/504。_total 让我们能发现
+    // 「只拿到前 1000 行」这种静默截断；不检查的话趋势图会拿半截数据算结果。
+    if (opt.count && Array.isArray(out)) {
+      var cr = res.headers.get("content-range") || "";
+      var mm = /\/(\d+|\*)\s*$/.exec(cr);
+      var total = mm && mm[1] !== "*" ? Number(mm[1]) : null;
+      Object.defineProperty(out, "_total", { value: total, enumerable: false });
+    }
+    return out;
   }
 
   function qs(p) {
@@ -142,7 +171,12 @@
     }).join("&");
   }
   function rest(table, params) {
-    return http("/rest/v1/" + table + (params ? "?" + qs(params) : ""));
+    params = params || {};
+    var wantCount = !!params.count;
+    var q = {};
+    Object.keys(params).forEach(function (k) { if (k !== "count") q[k] = params[k]; });
+    return http("/rest/v1/" + table + (Object.keys(q).length ? "?" + qs(q) : ""),
+      wantCount ? { prefer: "count=exact" } : undefined);
   }
   function rpc(fn, args) {
     return http("/rest/v1/rpc/" + fn, { method: "POST", body: args || {} });
@@ -170,16 +204,22 @@
   /* ── 会话 ───────────────────────────────────────────────────────────── */
   function setSession(d) {
     var exp = d.expires_at || (Math.floor(Date.now() / 1000) + (d.expires_in || 3600));
+    var prev = S.session && S.session.user && S.session.user.id;
+    var nextUser = d.user ? { id: d.user.id, email: d.user.email } : (S.session && S.session.user) || null;
+    if (prev && nextUser && prev !== nextUser.id) lastGood = null;  // 换人了，旧保底数据作废
     S.session = {
       access_token: d.access_token,
       refresh_token: d.refresh_token,
       expires_at: exp,
-      user: d.user ? { id: d.user.id, email: d.user.email } : (S.session && S.session.user) || null
+      user: nextUser
     };
     lsSet(LS_SESS, JSON.stringify(S.session));
   }
   function clearSession() {
     S.session = null; S.me = null; S.role = null; S.feRole = null;
+    // 换账号时绝不能让上一次的「保底数据」留给下一个用户看到
+    lastGood = null;
+    S.stale = false; S.error = null; S.syncing = false;
     lsSet(LS_SESS, null);
   }
   async function ensureFresh() {
@@ -256,6 +296,12 @@
       return;
     }
     await ensureFresh();
+    if (!S.session) {            // ensureFresh 刷新失败会清掉会话
+      S.mode = "demo"; S.syncing = false; S.error = null;
+      S.reason = "登录已失效，请重新登录";
+      emit();
+      return;
+    }
     var uid = S.session.user && S.session.user.id;
     S.queries = [];
 
@@ -268,7 +314,22 @@
       return rest("memberships", { select: "org_id,team_id,role,expires_at" });
     });
 
-    S.memberships = mem || [];
+    // 「查询失败」绝不能被读成「查到 0 行」。以前 mem=null 会直接进开通向导，
+    // 网络一抖就可能让用户新建一个重复组织。
+    if (mem === null) {
+      var why = (S.queries.filter(function (q) { return !q.ok; }).pop() || {}).error || "成员关系查询失败";
+      S.syncing = false;
+      if (lastGood) {
+        apply(lastGood);
+        S.stale = true; S.reason = "刷新失败，显示上次成功的数据：" + why;
+      } else {
+        S.mode = "error"; S.error = "读取成员关系失败：" + why; S.reason = S.error;
+      }
+      emit();
+      return;
+    }
+
+    S.memberships = mem;
     var roles = S.memberships.map(function (m) { return m.role; });
     S.role = ROLE_RANK.filter(function (r) { return roles.indexOf(r) >= 0; })[0] || null;
     S.feRole = S.role ? (window.ARC && window.ARC.ROLE_MAP ? reverseRole(S.role) : null) : null;
@@ -281,13 +342,18 @@
     if (!S.memberships.length) {
       // 注册成功但还没开通组织：进入开通向导，而不是给一个空界面
       S.needOnboarding = true;
-      S.mode = "live";
+      S.mode = "live";           // 向导页不展示任何指标，不涉及「数值真假」
+      S.syncing = false; S.stale = false; S.error = null;
       S.reason = "已登录，尚未加入任何组织";
       emit();
       return;
     }
     S.needOnboarding = false;
-    S.mode = "live";
+    // 关键：mode 只能在 apply() 里切到 live（那时数组已经被真实值替换）。
+    // 以前在这里先置 live，登录后的几百毫秒里页面会挂「真实数据」而显示演示数字。
+    S.syncing = true;
+    S.error = null;
+    emit();
     await load();
   }
 
@@ -363,11 +429,21 @@
   /* ── 读全量数据并映射到原型的数据形状 ───────────────────────────────── */
   async function load() {
     if (!S.session) return;
-    S.busy = true; S.queries = []; S.partial = false;
+    S.busy = true; S.syncing = true; S.queries = [];
+    S.partial = false; S.truncated = false; S.error = null;
     emit();
     try {
       await ensureFresh();
+      if (!S.session) { S.error = "登录已失效，请重新登录"; return; }
       var uid = S.session.user.id;
+
+      // 窗口与 mapAll 的 dayList(28) 完全一致；只取这 28 天，不做「拿全部历史再看前 28 天」。
+      var WINDOW = 28;
+      var since = dayList(WINDOW)[0];
+      var METRICS = '"tl.srpe","ctl","atl","tsb","acwr.ewma","acwr.rolling","tm","ts","load.week","hrv.rmssd","hrv.lnrmssd","hrv.baseline","hrv.swc","hrv.z","sleep.tst","sleep.efficiency","sleep.debt","readiness"';
+      function truncated(arr) {
+        return arr && arr._total !== null && arr._total !== undefined && arr.length < arr._total;
+      }
 
       var ath = await step("athletes（可见运动员）", function () {
         return rest("athletes", {
@@ -375,25 +451,75 @@
           order: "created_at"
         });
       });
+      var primary = (ath || []).filter(function (a) { return a.user_id === uid; })[0] || (ath || [])[0] || null;
+
       var act = await step("activities（训练记录）", function () {
         return rest("activities", {
           select: "id,athlete_id,started_at,sport,duration_s,distance_m,training_load,load_method,rpe,source",
-          order: "started_at.desc", limit: "200"
+          order: "started_at.desc", limit: "200", count: true
         });
       });
-      var dm = await step("daily_metrics（每日指标）", function () {
+      if (truncated(act)) S.truncated = true;
+
+      // 原先一条 limit=8000 会被 PostgREST 的默认 1000 行上限静默截断。
+      // 拆成两条：① 全体成员只要 2 个指标（成员列表用）；② 当前运动员取全部 18 个（图表/今日页用）。
+      // 两条都带 count=exact，行数对不上就标 truncated，绝不拿半截数据算趋势。
+      var dmTeam = await step("daily_metrics（成员 28 日 · 2 指标）", function () {
         return rest("daily_metrics", {
           select: "athlete_id,metric_date,metric_id,value,quality,source,unit",
-          metric_id: 'in.("tl.srpe","ctl","atl","tsb","acwr.ewma","acwr.rolling","tm","ts","load.week","hrv.rmssd","hrv.lnrmssd","hrv.baseline","hrv.swc","hrv.z","sleep.tst","sleep.efficiency","sleep.debt","readiness")',
-          order: "metric_date.desc", limit: "8000"
+          metric_id: 'in.("tl.srpe","acwr.ewma")',
+          metric_date: "gte." + since,
+          order: "metric_date.asc", limit: "1000", count: true
         });
       });
+      var dmMine = await step("daily_metrics（本人 28 日 · 全指标）", function () {
+        var p = {
+          select: "athlete_id,metric_date,metric_id,value,quality,source,unit",
+          metric_id: "in.(" + METRICS + ")",
+          metric_date: "gte." + since,
+          order: "metric_date.asc", limit: "1000", count: true
+        };
+        if (primary) p.athlete_id = "eq." + primary.id;
+        return rest("daily_metrics", p);
+      });
+      if (truncated(dmTeam) || truncated(dmMine)) S.truncated = true;
+      var dm = (dmMine || []).concat(dmTeam || []);
+      // 两条查询在本人那一块会重叠，按 [athlete|date|metric] 去重；本人的全指标查询在前，优先保留它
+      (function () {
+        var seen = {};
+        dm = dm.filter(function (r) {
+          var k = r.athlete_id + "|" + String(r.metric_date).slice(0, 10) + "|" + r.metric_id;
+          if (seen[k]) return false;
+          seen[k] = 1; return true;
+        });
+      })();
+
       var ts = await step("test_sessions + jump_tests / vbt_sets", function () {
         return rest("test_sessions", {
           select: "id,athlete_id,kind,performed_at,source,jump_tests(jump_type,height_cm,contact_ms,flight_ms,rsi,video_fps,quality),vbt_sets(exercise,load_kg,reps,mcv,mpv,pv,vl_pct,power_w,quality)",
-          order: "performed_at.desc", limit: "100"
+          order: "performed_at.desc", limit: "100", count: true
         });
       });
+      if (truncated(ts)) S.truncated = true;
+
+      // 精确总数：列表只拉最近 N 条，「累计 N 次」这类数字不能拿截断数组的长度来算。
+      // 注意 jump_tests 的主键是 session_id，没有 id 列；早期统一用 select=id 会报 42703，
+      // 进而让 S.partial=true，明明数据全读到了却挂「部分数据集读取失败」。
+      var COUNT_TABLES = [
+        ["activities", "id"], ["test_sessions", "id"], ["session_assignments", "id"],
+        ["jump_tests", "session_id"], ["vbt_sets", "id"]
+      ];
+      var counts = {};
+      var cntRows = await Promise.all(COUNT_TABLES.map(function (pair) {
+        return step("计数 · " + pair[0], function () {
+          return rest(pair[0], { select: pair[1], limit: "1", count: true });
+        });
+      }));
+      COUNT_TABLES.forEach(function (pair, i) {
+        var r = cntRows[i];
+        counts[pair[0]] = r && r._total !== null && r._total !== undefined ? r._total : null;
+      });
+      S.counts = counts;
       var dev = await step("devices（设备）", function () {
         return rest("devices", { select: "id,kind,vendor,model,serial,status,last_sync_at,athlete_id", order: "created_at.desc" });
       });
@@ -500,26 +626,36 @@
         cycles: cyc.cycles || [], blocks: cyc.blocks || [],
         templates: lib.templates || [], items: lib.items || [],
         rules: rul || [], progress: progress, week: week,
-        vbtProfile: vbtProfile, vbtSession: vbtSession, vbtExercise: vbtExercise
+        vbtProfile: vbtProfile, vbtSession: vbtSession, vbtExercise: vbtExercise,
+        counts: counts
       });
       apply(payload);
 
       S.lastSync = nowText();
-      S.reason = S.partial ? "部分数据集读取失败（已按空值呈现，不回填演示数据）" : "已连接真实库";
+      S.stale = false; S.error = null;
+      S.reason = S.truncated ? "有数据集被行数上限截断（界面已标注，不以局部数据冒充全量）"
+        : S.partial ? "部分数据集读取失败（已按空值呈现，不回填演示数据）" : "已连接真实库";
     } catch (e) {
       if (e.status === 401 || /JWT|jwt/i.test(String(e.message || ""))) {
-        // 会话失效：清干净并要求重新登录，不能悄悄退化成演示数据让人以为还在看真数据
+        // 会话失效：清干净、弹出登录浮层。此时浮层盖住页面，不会有人误读下面那层。
         clearSession();
-        S.mode = "demo";
+        S.mode = "demo"; S.stale = false; S.error = null;
         S.reason = "登录已失效，请重新登录";
         restoreDemo();
+      } else if (lastGood) {
+        // 有上一次成功的数据：保留它，明确标注「可能已过期」。
+        // 绝不做「刷新失败 → 换成演示数字」这种事，那会让一屏真数据在毫无提示下变假。
+        apply(lastGood);
+        S.mode = "live"; S.stale = true; S.error = null;
+        S.reason = "刷新失败，显示上次成功同步的数据（" + (S.lastSync || "时间未知") + "）：" + e.message;
       } else {
-        S.mode = "demo";
-        S.reason = "读取失败，已回退到演示数据：" + e.message;
-        restoreDemo();
+        // 从未成功加载过：显式报错 + 重试，不给任何数值（演示常量也不能给）。
+        S.mode = "error"; S.stale = false;
+        S.error = "读取失败：" + (e.message || "未知错误");
+        S.reason = S.error;
       }
     } finally {
-      S.busy = false;
+      S.busy = false; S.syncing = false;
       emit();
       // 外壳里的数据源徽标要跟着「已连接 / 上次同步」更新
       if (window.ARC_RELOAD) window.ARC_RELOAD();
@@ -532,6 +668,8 @@
     var arrays = {};
     var DAYS = 28;
     var days = dayList(DAYS);
+    // 精确总数（Prefer: count=exact）。列表受 limit 限制，累计类数字不能用数组长度冒充。
+    arrays.COUNTS = d.counts || null;
 
     // 指标按 [athlete|date|metric] 建索引
     var idx = {};
@@ -904,6 +1042,10 @@
   function apply(p) {
     var A = window.ARC;
     Object.keys(p.arrays).forEach(function (k) { A[k] = p.arrays[k]; });
+    // 只有「真实值已经落地」之后才允许 mode=live。这一行是「假 live 窗口」的闸门。
+    lastGood = p;
+    S.mode = "live";
+    S.error = null;
     if (window.ARC_LIVE) window.ARC_LIVE.stop();      // 真实模式不跑假 SSE 抖动
     if (p.feRole && window.ARC_SET_ROLE) window.ARC_SET_ROLE(p.feRole);
     if (window.ARC_DB_MODE) window.ARC_DB_MODE(true);
@@ -915,6 +1057,7 @@
     if (demoSnapshot) {
       Object.keys(demoSnapshot).forEach(function (k) { A[k] = JSON.parse(JSON.stringify(demoSnapshot[k])); });
     }
+    S.stale = false; S.error = null; S.syncing = false;
     if (window.ARC_DB_MODE) window.ARC_DB_MODE(false);
     if (window.ARC_SET_ROLE) window.ARC_SET_ROLE("head_coach");
     if (window.ARC_RELOAD) window.ARC_RELOAD();

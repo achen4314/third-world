@@ -27,7 +27,8 @@
     "accounts": "node tools/accounts.mjs list",
     "seed:demo": "node tools/seed-demo.mjs",
     "q": "node tools/q.mjs",
-    "set:key": "node tools/set-key.mjs"
+    "set:key": "node tools/set-key.mjs",
+    "db:0012": "node tools/apply-sql.mjs supabase/migrations/20261114000012_rest_day_decay.sql"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.2.0",

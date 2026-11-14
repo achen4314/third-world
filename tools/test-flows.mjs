@@ -195,7 +195,7 @@ try {
     `天数=${Object.keys(byDay).length}`);
   // 0011：状态量逐日推进，休息日有 CTL/ACWR 但没有 TL（不补 0）
   const restDay = "2026-11-06";
-  check("休息日状态量延续（CTL 有值）", byDay[restDay]?.ctl !== undefined, `ctl=${byDay[restDay]?.ctl}`);
+  check("休息日状态量逐日推进（CTL 有值）", byDay[restDay]?.ctl !== undefined, `ctl=${byDay[restDay]?.ctl}`);
   check("休息日不写 TL（缺测=无行）", byDay[restDay]?.["tl.srpe"] === undefined,
     `tl=${byDay[restDay]?.["tl.srpe"]}`);
   check("Day1 TL = 100", byDay[dayA]?.["tl.srpe"] === 100, `实际 ${byDay[dayA]?.["tl.srpe"]}`);
@@ -214,6 +214,35 @@ try {
     byDay[dayA].tm === undefined && byDay[dayA].ts === undefined,
     "第 1–6 天无 7/7 有效天");
   check("calc_version 落库", dm.rows.every((r) => r.calc_version === "v1.0"));
+
+  // 0012：休息日按 0 负荷推进 EWMA，不能再「延续」。延续会让连休两周的 ATL
+  // 停在停训前，TSB 不回升、就绪度继续说「可执行既定强度」。
+  const restCtl = byDay[restDay]?.ctl;
+  const restAtl = byDay[restDay]?.atl;
+  check("休息日 CTL 按 0 负荷衰减（λ=1/42）",
+    restCtl !== undefined && Math.abs(restCtl - byDay[dayB].ctl * (1 - 1 / 42)) < 0.01,
+    `实际 ${restCtl} 期望 ${(byDay[dayB].ctl * (1 - 1 / 42)).toFixed(4)}`);
+  check("休息日 ATL 按 0 负荷衰减（λ=1/7）",
+    restAtl !== undefined && Math.abs(restAtl - byDay[dayB].atl * (1 - 1 / 7)) < 0.01,
+    `实际 ${restAtl} 期望 ${(byDay[dayB].atl * (1 - 1 / 7)).toFixed(4)}`);
+  check("休息日 ACWR(EWMA) 下降而不是冻结",
+    byDay[restDay]["acwr.ewma"] < byDay[dayB]["acwr.ewma"],
+    `${byDay[dayB]["acwr.ewma"]} → ${byDay[restDay]["acwr.ewma"]}`);
+
+  // 连休 14 天：ATL 必须降到 20% 以下，且休息日仍不落 tl.srpe
+  const longRest = "2026-11-20";
+  await asUser(athleteUser.id, () =>
+    q(`select public.arc_recompute_metrics($1, $2::date)`, [ath.id, longRest]));
+  const tail = await one(
+    `select max(case when metric_id='atl' then value end) atl,
+            max(case when metric_id='tsb' then value end) tsb,
+            max(case when metric_id='tl.srpe' then value end) tl
+       from public.daily_metrics where athlete_id=$1 and metric_date=$2::date`,
+    [ath.id, longRest]);
+  check("连休 14 天 ATL 降到 20% 以下", Number(tail.atl) < Number(byDay[dayB].atl) * 0.2,
+    `${byDay[dayB].atl} → ${tail.atl}`);
+  check("连休 14 天 TSB 回升为正", Number(tail.tsb) > 0, `tsb=${tail.tsb}`);
+  check("连休 14 天仍不写 TL（不补 0）", tail.tl === null, `tl=${tail.tl}`);
 
   /* ── D. 越权与隔离 ─────────────────────────────────────────────────── */
   console.log("\nD. 权限隔离");

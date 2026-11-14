@@ -198,7 +198,7 @@ begin
     select value into v_acwr_rest from public.daily_metrics
       where athlete_id = v_ath and metric_date = v_d2 and metric_id = 'acwr.ewma';
 
-    raise notice '休息日自检 TL=% (应为 null) / CTL=% (应为 100) / ACWR=% (应为 1)',
+    raise notice '休息日自检 TL=% (应为 null) / CTL=% / ACWR=%（休息日状态量会衰减，具体值由 0012 自检覆盖）',
       v_tl_rest, v_ctl_rest, v_acwr_rest;
 
     if v_tl_rest is not null or v_ctl_rest is null or v_acwr_rest is null then

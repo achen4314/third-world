@@ -46,7 +46,11 @@
     sheet: null, palette: false, paletteIndex: 0, manualType: "jump",
     manualCount: 0,
     // true = 当前页面数据来自 Supabase 真实库（RLS 生效）；false = 演示常量
-    dbLive: false
+    dbLive: false,
+    // 连接状态机：同步中不给数值、报错不给数值、stale 明确标注时间。
+    // 这三件事比「显示什么数字」更重要——它们决定用户能不能相信眼前的数字。
+    dbSyncing: false, dbStale: false, dbError: null,
+    dbTruncated: false, dbLastSync: null, dbReason: ""
   };
   const SIZES = { iphone: [390, 844], ipad: [1024, 720], mac: [1440, 900] };
   const COLS = { iphone: 1, ipad: 2, mac: 3 };
@@ -392,10 +396,17 @@
         '</tbody></table></div>' + (s.note ? '<div class="card-note">' + esc(s.note) + "</div>" : "") + '</div>';
     }
     if (s.type === "note") {
+      let actBtn = "";
+      if (s.action) {
+        const a = s.action;
+        const attrs = a.act
+          ? 'data-act="' + esc(a.act) + '"' + (a.id ? ' data-id="' + esc(a.id) + '"' : "")
+          : (a.sheet ? 'data-act="sheet" data-sheet="' + esc(a.sheet) + '"' : 'data-act="nav" data-route="' + esc(a.route) + '"');
+        actBtn = '<div style="margin-top:10px"><button class="btn sm" ' + attrs + '>' + esc(a.label) + '</button></div>';
+      }
       return '<div class="note ' + (s.tone || "") + ' ' + cls + '" ' + delay + '>' +
         (s.title ? '<div class="note-title">' + (s.tone === "warn" ? "⚠ " : "ℹ ") + esc(s.title) + '</div>' : "") +
-        '<div>' + s.body + '</div>' +
-        (s.action ? '<div style="margin-top:10px"><button class="btn sm" data-act="' + (s.action.sheet ? "sheet" : "nav") + '" ' + (s.action.sheet ? 'data-sheet="' + s.action.sheet + '"' : 'data-route="' + s.action.route + '"') + '>' + esc(s.action.label) + '</button></div>' : "") + '</div>';
+        '<div>' + s.body + '</div>' + actBtn + '</div>';
     }
     if (s.type === "flow") {
       return '<div class="card ' + cls + '" ' + delay + '>' + head + '<div class="flow">' + s.steps.map((st, i) => '<div class="flow-step"><span class="flow-n">' + (i + 1) + '</span><div><div class="flow-t">' + esc(st.t) + '</div><div class="flow-d">' + esc(st.d) + "</div></div></div>").join("") + '</div></div>';
@@ -558,9 +569,19 @@
     const ovChip = ov
       ? '<button class="chip warn" data-act="clear-override" title="本机存储的 ' + esc(ov.field) + ' 覆盖了 env.js">本机覆盖 · ' + esc(ov.field) + ' · 点此清除</button>'
       : "";
-    return (state.dbLive
-      ? '<span class="chip live">真实数据 · RLS 生效</span>'
-      : '<span class="chip demo">DEMO 演示数据</span>') + ovChip;
+    let main;
+    if (state.dbSyncing) {
+      main = '<span class="chip sync">同步中 · 暂不显示数值</span>';
+    } else if (state.dbError) {
+      main = '<span class="chip err" title="' + esc(state.dbReason) + '">数据未加载 · 不显示任何数值</span>';
+    } else if (state.dbStale) {
+      main = '<span class="chip warn" title="' + esc(state.dbReason) + '">上次同步 ' + esc(state.dbLastSync || "时间未知") + ' · 数据可能已过期</span>';
+    } else if (state.dbLive) {
+      main = '<span class="chip live">' + (state.dbTruncated ? '真实数据 · 窗口被截断' : '真实数据 · RLS 生效') + '</span>';
+    } else {
+      main = '<span class="chip demo">DEMO 演示数据</span>';
+    }
+    return main + ovChip;
   }
   const curWindow = () => (window.ARC_LIVE ? window.ARC_LIVE.state.window : state.params.window);
   const analyzeChips = () => [
@@ -1549,9 +1570,12 @@
         ];
       }
 
+      const CNT = (A.COUNTS || {});
+      const exactTests = CNT.test_sessions === null || CNT.test_sessions === undefined ? null : Number(CNT.test_sessions);
       return [
         S_metrics([
-          { label: "累计测试", value: String(J.length), unit: "次", delta: condKeys.length + " 种条件 · 云端留存" },
+          { label: "累计测试", value: exactTests === null ? String(J.length) : String(exactTests), unit: "次",
+            delta: exactTests === null ? "当前已加载的记录（非精确总数）" : "库内精确总数 · count=exact" },
           { label: "CMJ 最好", value: bestCmj === null ? "—" : fmt(bestCmj, 1), unit: bestCmj === null ? "" : "cm",
             delta: bestCmj === null ? "无 CMJ 记录" : "共 " + cmj.length + " 次有效", na: bestCmj === null },
           { label: "DJ RSI 最好", value: bestRsi === null ? "—" : fmt(bestRsi, 2),
@@ -2127,8 +2151,15 @@
     // 外壳上的「DEMO 演示数据」标签也要跟着连接状态变，不能一边连真库一边挂着 DEMO
     const tag = document.querySelector(".console .demo-tag");
     if (tag) {
-      tag.textContent = state.dbLive ? "真实数据 · RLS 生效" : "DEMO 演示数据";
-      tag.classList.toggle("live", !!state.dbLive);
+      const txt = state.dbSyncing ? "同步中 · 暂不显示数值"
+        : state.dbError ? "数据未加载"
+        : state.dbStale ? "数据可能已过期 · " + (state.dbLastSync || "")
+        : state.dbLive ? (state.dbTruncated ? "真实数据 · 窗口被截断" : "真实数据 · RLS 生效")
+        : "DEMO 演示数据";
+      tag.textContent = txt;
+      tag.classList.toggle("live", !!state.dbLive && !state.dbError && !state.dbStale && !state.dbSyncing);
+      tag.classList.toggle("warn", !!(state.dbError || state.dbStale || state.dbTruncated));
+      tag.title = state.dbReason || "";
     }
   }
   function renderShell() {
@@ -2172,15 +2203,20 @@
            : '<span class="topbar-title">' + esc(pg.title) + '</span>') +
       '<span class="topbar-spacer"></span>' +
       (isAdmin ? '<button class="pill accent" data-act="sheet" data-sheet="roles">' + icon("shield", 13) + ' ' + roleLabel(state.role) + '</button>' : "") +
-      // 真库模式下不摆「实时 · 1 Hz」与「对标评分」：前者是本地仿真推流，后者是厂商评分占位，
-      // 摆在真实数字旁边会被当成真有数据在推、真有厂商评分。
-      (state.dbLive ? "" :
+      // 真库模式（含同步中/失败/过期）都不摆「实时 · 1 Hz」与「对标评分」：前者是本地仿真推流，
+      // 后者是厂商评分占位，摆在真实数字旁边会被当成真有数据在推、真有厂商评分。
+      (state.dbLive || state.dbSyncing || state.dbError || state.dbStale ||
+       (window.ARC_DB && window.ARC_DB.state && window.ARC_DB.state.session) ? "" :
         '<button class="pill hide-phone live-pill" data-act="live-toggle" title="暂停 / 继续实时推流"><span class="live-dot on" data-live-dot></span><span data-live-label>实时 · 1 Hz</span></button>' +
         '<button class="icon-btn hide-phone" data-act="live-refresh" title="即时刷新" aria-label="即时刷新">↻</button>' +
         '<button class="pill hide-phone" data-act="sheet" data-sheet="scores">对标评分</button>') +
       '<button class="pill hide-phone" data-act="sheet" data-sheet="window">28 日 · ' + (state.params.acwr === "ewma" ? "EWMA" : "rolling") + '</button>' +
-      (state.dbLive
-        ? '<button class="pill accent" data-act="arc-record">＋ 记录</button><span class="pill live" title="数据来自 Supabase 真实库，行级权限已生效">真实数据</span>'
+      (state.dbSyncing
+        ? '<span class="pill sync" title="正在从真实库同步，此刻不展示任何数值">同步中</span>'
+        : state.dbError
+        ? '<span class="pill err" title="' + esc(state.dbReason) + '">数据未加载</span>'
+        : state.dbLive
+        ? '<button class="pill accent" data-act="arc-record">＋ 记录</button><span class="pill ' + (state.dbStale || state.dbTruncated ? "warnp" : "live") + '" title="' + esc(state.dbReason || "数据来自 Supabase 真实库，行级权限已生效") + '">' + (state.dbStale ? "数据可能已过期" : state.dbTruncated ? "真实数据 · 截断" : "真实数据") + '</span>'
         : '<span class="pill demo" title="演示数据，不是真实训练记录">DEMO</span>') +
       '<button class="pill accent" data-act="workspace">' + icon(isAdmin ? "arrow" : "shield", 13) + (isAdmin ? " 返回" : " 工作台") + '</button>' +
       '<button class="pill kbd-hint" data-act="palette">' + icon("search", 13) + '<span class="kbd">⌘K</span></button>';
@@ -2204,6 +2240,32 @@
     const pg = P[state.route] || P.today;
     const ac = accessFor(state.route);
     const content = document.getElementById("content");
+
+    // P0：同步中 / 读取失败，一屏数值都不给。
+    // 过去这里会用演示常量把页面填满，而顶栏已经切到「真实数据」——那是最危险的展示错误。
+    if (state.dbSyncing || state.dbError) {
+      const loading = !state.dbError;
+      content.innerHTML = '<div class="page"><div class="page-head">' +
+        '<div class="page-eyebrow">' + (loading ? "SYNC / 连接真实库" : "DATA / 读取失败") + '</div>' +
+        '<h1 class="page-title">' + (loading ? "正在读取真实数据" : "没有拿到数据，所以不显示数字") + '</h1>' +
+        '<p class="page-question">' + (loading
+          ? "登录已通过，正在读取你有权限的行。这一屏刻意留空：在真实值落地之前，不会把演示常量当成你的训练数据。"
+          : esc(state.dbError) + "。界面保留空白，不会退回演示数字，也不会沿用上一次的错误结论。") + '</p>' +
+        '<div class="page-chips">' + dataChip() + '</div></div>' +
+        '<div class="page-grid"><div class="card span-3 ' + (loading ? "sync-skeleton" : "load-error") + '">' +
+        (loading
+          ? '<div class="card-head"><h3 class="section-title">同步中</h3></div>' +
+            '<div class="skel-line w60"></div><div class="skel-line w90"></div><div class="skel-line w75"></div>' +
+            '<div class="skel-bars"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>' +
+            '<div class="card-note">读取完成后会自动替换整页，不需要刷新。</div>'
+          : '<div class="card-head"><h3 class="section-title">可以怎么做</h3></div>' +
+            '<p class="mini">检查网络与数据源配置后重试；也可以显式切到演示版（会明确标注 DEMO）。</p>' +
+            '<div class="hero-actions"><button class="btn primary" data-act="db-retry">重试读取</button>' +
+            '<button class="btn" data-act="sheet" data-sheet="db">查看数据源诊断</button></div>') +
+        '</div></div></div>';
+      return;
+    }
+
     if (!ac.ok) {
       content.innerHTML = '<div class="page"><div class="page-head"><div class="page-eyebrow">PERMISSION / 403</div><h1 class="page-title">' + esc(pg.title) + '</h1><p class="page-question">此模块对当前角色不可用</p></div>' +
         '<div class="card locked"><div class="locked-ico">' + icon("lock", 34) + '</div><div class="locked-title">已锁定 · ' + esc(ac.module) + '</div>' +
@@ -2219,6 +2281,18 @@
     // 「实时 · 1 Hz / 最新更新 18:29:40 / device.sample」配着真实数字出现，会被读成真有数据在推。
     let sections = pg.sections.slice();
     const LV = state.dbLive ? null : window.ARC_LIVE;
+    // 数据不是「此刻」的、或窗口被截断时，把这件事放在第一屏最上面。
+    // 不写在角标里——角标会被忽略，横幅不会。
+    if (state.dbStale) {
+      sections.unshift(S_note("显示的是上次成功同步的数据",
+        "本次刷新失败，界面保留上一次成功读取的结果（" + esc(state.dbLastSync || "时间未知") + "），<b>不是实时数据</b>。" +
+        esc(state.dbReason || "") + " 点右侧按钮可重试。", "warn", 3,
+        { label: "重试读取", act: "db-retry" }));
+    } else if (state.dbTruncated) {
+      sections.unshift(S_note("数据窗口被截断，趋势可能不完整",
+        "单次查询返回的行数小于符合条件的总行数（PostgREST 行数上限）。当前曲线与累计值只覆盖已取回的部分，" +
+        "<b>不要据此判断长期趋势</b>。已把查询拆成 28 日窗口与分指标读取，若仍出现此提示请缩小队员范围或改用服务端聚合。", "warn", 3));
+    }
     if (LV) {
       if (sections.some(x => x.type === "chart" || x.type === "heat")) sections.unshift(S_livebar());
       const scoreMap = {
@@ -2622,6 +2696,14 @@
     if (a === "arc-record") { if (window.ARC_UI) window.ARC_UI.openRecord(); return; }
     if (a === "download-csv") { downloadCsv(el.dataset.kind); return; }
     if (a === "assign") { assignTemplate(el.dataset.id); return; }
+    if (a === "db-retry") {
+      if (!window.ARC_DB || !window.ARC_DB.state.session) { toast("请先登录再重试", "warn"); return; }
+      toast("正在重新读取真实数据", "info");
+      Promise.resolve(window.ARC_DB.reload()).catch(function (e) {
+        toast("仍然失败：" + (e && e.message ? e.message : "未知错误"), "warn");
+      });
+      return;
+    }
     if (a === "clear-override") {
       if (window.ARC_DB) { window.ARC_DB.clearConfig(); }
       toast("已清除本机覆盖，正在按 env.js 重新连接", "info");
@@ -2710,6 +2792,18 @@
     state.role = id; return true;
   };
   window.ARC_DB_MODE = function (v) { state.dbLive = !!v; };
+  // 由 supabase-client 的 emit() 推送。同步中/失败/截断都必须让渲染层知道，
+  // 否则会出现「真实数据」标签配演示数值这种最坏的组合。
+  window.ARC_DB_STATUS = function (o) {
+    if (!o) return;
+    state.dbLive = !!o.live;
+    state.dbSyncing = !!o.syncing;
+    state.dbStale = !!o.stale;
+    state.dbError = o.error || null;
+    state.dbTruncated = !!o.truncated;
+    state.dbLastSync = o.lastSync || null;
+    state.dbReason = o.reason || "";
+  };
   window.ARC_GOTO = navigate;
   window.ARC_DEBUG = { state, P, load, computeLoad, LVP, oneRM, jumpH, navigate, openSheet, LIVE: window.ARC_LIVE };
 })();

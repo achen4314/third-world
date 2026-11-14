@@ -218,7 +218,14 @@ function json(res, code, body, extra = {}) {
   res.end(s);
 }
 
+// --delay=<ms> 用来人为放慢所有响应，专门验证前端的「同步中」骨架状态。
+// 平时为 0，不影响其它测试。
+const DELAY = Number(opt.delay || 0);
 const server = http.createServer((req, res) => {
+  if (DELAY > 0) { setTimeout(() => handle(req, res), DELAY); return; }
+  handle(req, res);
+});
+function handle(req, res) {
   if (req.method === "OPTIONS") return json(res, 204, null);
   const u = new URL(req.url, "http://127.0.0.1");
   const p = u.pathname;
@@ -324,7 +331,7 @@ const server = http.createServer((req, res) => {
   }
 
   json(res, 404, { message: "not found" });
-});
+}
 
 server.listen(PORT, "127.0.0.1", () => {
   console.log(`\nMock API 已启动：http://127.0.0.1:${PORT}`);
