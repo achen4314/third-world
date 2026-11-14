@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第三世界 · 后台管理控制台</title>
+<style>
+  :root{--bg:#f5f6f8;--card:#fff;--line:#e3e6ea;--text:#1c2027;--dim:#6b7280;--ok:#17845b;--bad:#c0392b;--accent:#2f5fe0}
+  *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",sans-serif}
+  .wrap{max-width:1040px;margin:0 auto;padding:28px 20px 60px}
+  h1{font-size:20px;margin:0 0 4px}.sub{color:var(--dim);font-size:13px;margin-bottom:22px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px 20px;margin-bottom:16px}
+  .card h2{font-size:15px;margin:0 0 12px}
+  .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  input{font:inherit;padding:9px 11px;border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--text);min-width:240px}
+  input:focus{outline:2px solid rgba(47,95,224,.25);border-color:var(--accent)}
+  button{font:inherit;padding:9px 14px;border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--text);cursor:pointer}
+  button:hover{border-color:var(--accent);color:var(--accent)}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  button.primary:hover{opacity:.9;color:#fff}
+  label{display:block;font-size:12px;color:var(--dim);margin:10px 0 4px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:10px}
+  .kv{border:1px solid var(--line);border-radius:9px;padding:10px 12px;background:#fafbfc}
+  .kv b{display:block;font-size:12px;color:var(--dim);font-weight:500;margin-bottom:4px}
+  .kv .v{font-size:13px;word-break:break-all;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  .ok{color:var(--ok)}.bad{color:var(--bad)}
+  .msg{margin-top:10px;font-size:13px;min-height:20px}
+  pre{background:#11161d;color:#dbe3ee;border-radius:9px;padding:12px;overflow:auto;max-height:320px;font-size:12px;line-height:1.5}
+  .pill{display:inline-block;font-size:11px;padding:2px 8px;border-radius:99px;border:1px solid var(--line);color:var(--dim);margin-left:8px}
+  .hide{display:none}
+  .warnbox{background:#fff8e8;border:1px solid #f0d9a0;color:#7a5600;border-radius:9px;padding:10px 12px;font-size:13px;margin-bottom:16px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>第三世界 · 后台管理控制台 <span class="pill">仅回环 + 口令访问</span></h1>
+  <div class="sub">管理前端连接配置、查看主机与数据库健康、执行白名单内的日常维护动作。</div>
+
+  <div id="gate" class="card">
+    <h2>输入管理口令</h2>
+    <div class="row">
+      <input id="token" type="password" placeholder="ARC_ADMIN_TOKEN" autocomplete="off">
+      <button class="primary" id="btnLogin">进入</button>
+    </div>
+    <div class="msg" id="gateMsg"></div>
+  </div>
+
+  <div id="main" class="hide">
+    <div class="warnbox" id="warn"></div>
+
+    <div class="card">
+      <h2>连接配置 <span class="pill">保存后写入 prototype/env.js</span></h2>
+      <label>Project URL</label><input id="cUrl" style="width:100%" placeholder="https://xxx.supabase.co">
+      <label>Publishable key <span id="keyState"></span></label><input id="cKey" style="width:100%" placeholder="留空 = 不修改已保存的 key">
+      <label>域名（用于 DNS 检查）</label><input id="cDomain" style="width:100%">
+      <label>备注</label><input id="cNote" style="width:100%" placeholder="选填">
+      <label class="row" style="margin-top:12px"><input id="cRuntime" type="checkbox" style="min-width:auto;width:auto"> 允许浏览器用 ?sburl= / ?sbkey= 覆盖（生产环境建议关闭）</label>
+      <div class="row" style="margin-top:14px">
+        <button class="primary" id="btnSave">保存并写入 env.js</button>
+        <button id="btnRefresh">刷新状态</button>
+        <span class="msg" id="cfgMsg"></span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>运行状态 <span class="pill" id="stamp"></span></h2>
+      <div class="grid" id="checks"></div>
+    </div>
+
+    <div class="card">
+      <h2>日常维护 <span class="pill">固定命令白名单，不接收任意命令</span></h2>
+      <div class="row">
+        <button data-act="healthcheck">健康检查</button>
+        <button data-act="nginx-test">校验 nginx 配置</button>
+        <button data-act="reload-nginx">重载 nginx</button>
+        <button data-act="restart-app">重启管理服务</button>
+        <button data-act="tail-logs">查看最近日志</button>
+      </div>
+      <pre id="out">点上面的按钮查看输出。</pre>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  var T = sessionStorage.getItem("arc_admin_token") || "";
+  var $ = function(id){ return document.getElementById(id); };
+  function api(p, opt){
+    opt = opt || {};
+    return fetch(p, Object.assign({ headers: { "Authorization": "Bearer " + T, "Content-Type": "application/json" } }, opt))
+      .then(function(r){ return r.json().then(function(j){ if(!r.ok) throw new Error(j.error || ("HTTP " + r.status)); return j; }); });
+  }
+  function esc(s){ return String(s == null ? "" : s).replace(/[&<>"']/g, function(c){ return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]; }); }
+
+  function showStatus(){
+    return api("/api/status").then(function(d){
+      $("stamp").textContent = d.time;
+      $("checks").innerHTML = d.checks.map(function(c){
+        var v = typeof c.value === "object" ? JSON.stringify(c.value) : c.value;
+        return '<div class="kv"><b>' + esc(c.label) + ' · ' + (c.ok ? '<span class="ok">正常</span>' : '<span class="bad">异常</span>') + '</b>' +
+               '<div class="v">' + esc(v) + '</div></div>';
+      }).join("");
+      var dnsCheck = d.checks.filter(function(c){ return c.label.indexOf("域名解析") === 0; })[0];
+      var sb = d.checks.filter(function(c){ return c.label === "Supabase Auth"; })[0];
+      var w = [];
+      if (dnsCheck && dnsCheck.ok && (!dnsCheck.value.a || !dnsCheck.value.a.length)) w.push("域名还没有 A 记录，公网尚无法访问。");
+      if (sb && (!sb.ok || sb.value.http !== 200)) w.push("Supabase Auth 未通过 200 校验，检查 key 或网络。");
+      if (!d.config.hasKey) w.push("还没配置 publishable key，前端只会显示演示数据。");
+      $("warn").innerHTML = w.length ? w.map(function(x){ return "⚠ " + esc(x); }).join("<br>") : "✓ 配置与连通性检查通过。";
+      return d;
+    });
+  }
+  function showConfig(){
+    return api("/api/config").then(function(c){
+      $("cUrl").value = c.supabaseUrl || "";
+      $("cKey").value = "";
+      $("cKey").placeholder = c.hasKey ? ("已保存 " + c.publishableKey + "（留空不改）") : "尚未配置";
+      $("keyState").textContent = c.hasKey ? "· 已配置" : "· 未配置";
+      $("cDomain").value = c.domain || "";
+      $("cNote").value = c.note || "";
+      $("cRuntime").checked = c.allowRuntimeKey === true;
+    });
+  }
+  function enter(){
+    T = $("token").value.trim();
+    if (!T) { $("gateMsg").textContent = "请输入口令"; return; }
+    api("/api/config").then(function(){
+      sessionStorage.setItem("arc_admin_token", T);
+      $("gate").classList.add("hide"); $("main").classList.remove("hide");
+      return Promise.all([showConfig(), showStatus()]);
+    }).catch(function(e){ $("gateMsg").innerHTML = '<span class="bad">' + esc(e.message) + '</span>'; });
+  }
+  $("btnLogin").onclick = enter;
+  $("token").onkeydown = function(e){ if (e.key === "Enter") enter(); };
+  $("btnRefresh").onclick = function(){ showStatus().catch(function(e){ $("cfgMsg").textContent = e.message; }); };
+  $("btnSave").onclick = function(){
+    var body = {
+      supabaseUrl: $("cUrl").value.trim(),
+      publishableKey: $("cKey").value.trim(),
+      domain: $("cDomain").value.trim(),
+      note: $("cNote").value,
+      allowRuntimeKey: $("cRuntime").checked
+    };
+    $("cfgMsg").textContent = "保存中…";
+    api("/api/config", { method: "POST", body: JSON.stringify(body) })
+      .then(function(r){ $("cfgMsg").innerHTML = '<span class="ok">已保存 → ' + esc(r.envPath) + '</span>'; return Promise.all([showConfig(), showStatus()]); })
+      .catch(function(e){ $("cfgMsg").innerHTML = '<span class="bad">' + esc(e.message) + '</span>'; });
+  };
+  Array.prototype.forEach.call(document.querySelectorAll("[data-act]"), function(b){
+    b.onclick = function(){
+      $("out").textContent = "执行中…";
+      api("/api/action", { method: "POST", body: JSON.stringify({ name: b.dataset.act }) })
+        .then(function(r){ $("out").textContent = (r.stdout || "") + "\n" + (r.stderr || "") + (r.error ? "\n错误：" + r.error : "") || "(无输出)"; })
+        .catch(function(e){ $("out").textContent = e.message; });
+    };
+  });
+  if (T) { $("token").value = T; enter(); }
+})();
+</script>
+</body>
+</html>

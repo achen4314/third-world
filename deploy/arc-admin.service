@@ -1,0 +1,27 @@
+[Unit]
+Description=第三世界 · 后台管理控制台
+After=network-online.target nginx.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/opt/arc-training
+Environment=ARC_ADMIN_ROOT=/opt/arc-training
+Environment=ARC_ADMIN_BIND=127.0.0.1
+Environment=ARC_ADMIN_PORT=8787
+Environment=ARC_DOMAIN=app.trthirdworld.online
+# 口令放在 /etc/arc-training/admin.env（0600），不要写进本文件、不要进 git
+EnvironmentFile=/etc/arc-training/admin.env
+ExecStart=/usr/bin/node /opt/arc-training/deploy/admin-console.mjs
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/opt/arc-training/prototype /opt/arc-training/deploy/runtime
+
+[Install]
+WantedBy=multi-user.target
