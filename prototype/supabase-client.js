@@ -570,6 +570,22 @@
       versions: (d.rules || []).length
     } : null;
 
+    // 全部版本：用于「切回上一版」与历史可解释性。payload 条目数一并带上，方便对比同一版改了什么。
+    arrays.RULE_VERSIONS = (d.rules || []).map(function (r) {
+      var p = r.payload || {};
+      return {
+        id: r.id,
+        version: r.version,
+        name: r.name,
+        effective_from: r.effective_from ? mdOf(r.effective_from) : "—",
+        is_active: !!r.is_active,
+        items: Object.keys(p).length,
+        payload: p
+      };
+    }).sort(function (a, b) {
+      return String(b.effective_from).localeCompare(String(a.effective_from));
+    });
+
     var ac = (d.cycles || []).filter(function (c) { return c.status === "active"; })[0] ||
              (d.cycles || [])[0] || null;
     arrays.CYCLE_META = ac ? {
@@ -684,6 +700,24 @@
       };
     }) : null;
 
+    // 质量分布：按当前运动员的行统计，页面不再写「suspect 2 天」这种无来源的数
+    (function () {
+      if (!mine) { arrays.QUALITY = null; return; }
+      var rows = d.metrics.filter(function (r) { return r.athlete_id === mine.id; });
+      var q = { rows: rows.length, ok: 0, suspect: 0, missing: 0, other: 0 }, byMetric = {};
+      rows.forEach(function (r) {
+        var b = byMetric[r.metric_id] || (byMetric[r.metric_id] = { id: r.metric_id, total: 0, ok: 0, suspect: 0, missing: 0 });
+        b.total++;
+        if (r.quality === "ok") { q.ok++; b.ok++; }
+        else if (r.quality === "suspect") { q.suspect++; b.suspect++; }
+        else if (r.quality === "missing") { q.missing++; b.missing++; }
+        else { q.other++; b.missing++; }
+      });
+      q.byMetric = Object.keys(byMetric).map(function (k) { return byMetric[k]; })
+        .sort(function (a, b) { return (b.missing + b.suspect) - (a.missing + a.suspect); });
+      arrays.QUALITY = q;
+    })();
+
     var last7 = days.slice(-7);
     arrays.SLEEP = last7.map(function (dt) {
       var tst = mine ? val(mine.id, dt, "sleep.tst") : null;
@@ -704,6 +738,8 @@
         name: a.sport || "训练",
         sport: a.sport || "未分类",
         dur: a.duration_s ? Math.round(a.duration_s / 60) + " min" : "—",
+        durMin: a.duration_s ? Math.round(a.duration_s / 60) : null,
+        dist: a.distance_m === null || a.distance_m === undefined ? null : Number(a.distance_m),
         tl: a.training_load === null ? null : Number(a.training_load),
         method: a.load_method || (a.rpe ? "sRPE" : "—"),
         rpe: a.rpe == null ? 0 : a.rpe,
@@ -711,6 +747,31 @@
         _id: a.id
       };
     });
+
+    // 我自己的档案：性别 / 生日 / 身高 / 体重是库里真有的字段，其余（HRmax / FTP / 腿长）根本没有列
+    arrays.ME = null;
+    if (mine) {
+      var ageYears = null;
+      if (mine.birth_date) {
+        var bd = new Date(String(mine.birth_date).slice(0, 10) + "T00:00:00");
+        var now = new Date();
+        ageYears = now.getFullYear() - bd.getFullYear();
+        var mth = now.getMonth() - bd.getMonth();
+        if (mth < 0 || (mth === 0 && now.getDate() < bd.getDate())) ageYears--;
+      }
+      arrays.ME = {
+        id: mine.id,
+        name: mine.full_name || "未命名",
+        sex: mine.sex || "unspecified",
+        birth: mine.birth_date ? String(mine.birth_date).slice(0, 10) : null,
+        age: ageYears,
+        height: mine.height_cm === null || mine.height_cm === undefined ? null : Number(mine.height_cm),
+        weight: mine.weight_kg === null || mine.weight_kg === undefined ? null : Number(mine.weight_kg),
+        team: (mine.teams && mine.teams.name) || "未分组",
+        status: mine.status || "active",
+        tz: "Asia/Shanghai"
+      };
+    }
 
     // 成员列表（教练视角）
     arrays.ATHLETES = d.athletes.map(function (a) {

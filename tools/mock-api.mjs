@@ -153,7 +153,11 @@ const RULE_PAYLOAD = {
   data: { min_valid_days: 7, partial_ratio: 0.8 }
 };
 
-const RULES = [{ id: "rule-1", version: "v1.0", name: "默认口径 v1.0", payload: RULE_PAYLOAD, effective_from: "2026-11-01", is_active: true }];
+// 两个版本：一版生效、一版历史。用来验证「切换版本」这条写路径，以及旧版本仍在列表里
+const RULES = [
+  { id: "rule-1", version: "v1.0", name: "默认口径 v1.0", payload: RULE_PAYLOAD, effective_from: "2026-11-01", is_active: true },
+  { id: "rule-0", version: "v0.9", name: "旧口径 v0.9（灰度前）", payload: RULE_PAYLOAD, effective_from: "2026-09-15", is_active: false }
+];
 
 const CYCLES = [{ id: "cyc-1", name: "冬季力量周期", phase: "build", status: "active", start_date: dayOffset(14), end_date: dayAhead(14), goal: "力量基础 + 爆发力维持", team_id: null, athlete_id: ATH }];
 
@@ -259,6 +263,18 @@ const server = http.createServer((req, res) => {
     if (fn === "arc_week_plan") return json(res, 200, WEEK_PLAN);
     if (fn === "arc_vbt_profile") return json(res, 200, VBT_PROFILE);
     if (fn === "arc_active_rule") return json(res, 200, RULE_PAYLOAD);
+    if (fn === "arc_activate_rule") {
+      let b = "";
+      req.on("data", (c) => (b += c));
+      return req.on("end", () => {
+        let id = null;
+        try { id = JSON.parse(b || "{}").p_rule; } catch { /* ignore */ }
+        if (!RULES.some((r) => r.id === id)) return json(res, 404, { message: "规则版本不存在", code: "P0002" });
+        RULES.forEach((r) => { r.is_active = r.id === id; });
+        console.log("[mock] rule activate ->", id);
+        return json(res, 204, null);
+      });
+    }
     return json(res, 200, ORG);
   }
 
