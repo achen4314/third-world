@@ -18,12 +18,16 @@
 	}
 
 	handle {
-		root * /opt/arc-training/prototype
+		root * __ROOT__/dist
 		try_files {path} {path}/ /index.html
 		file_server
 	}
 
-	@env path /env.js
+	@manifest path */manifest.webmanifest
+	header @manifest Cache-Control "no-cache"
+	@sw path */sw.js
+	header @sw Cache-Control "no-store"
+	@env path */env.js
 	header @env Cache-Control "no-store"
 
 	header {

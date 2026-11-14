@@ -29,7 +29,11 @@
     "q": "node tools/q.mjs",
     "set:key": "node tools/set-key.mjs",
     "db:0012": "node tools/apply-sql.mjs supabase/migrations/20261114000012_rest_day_decay.sql",
-    "admin:console": "node deploy/admin-console.mjs"
+    "admin:console": "node deploy/admin-console.mjs",
+    "build:platforms": "node build/platforms.mjs",
+    "verify:data": "node tools/verify-data.mjs",
+    "serve:dist": "python3 -m http.server 8800 --bind 127.0.0.1 --directory dist",
+    "build": "node build/platforms.mjs"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.2.0",

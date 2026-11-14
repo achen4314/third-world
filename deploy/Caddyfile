@@ -30,15 +30,20 @@ __DOMAIN__, www.__DOMAIN__ {
 		reverse_proxy 127.0.0.1:8787
 	}
 
-	# 静态站
+	# 静态站：三端独立版本（/iphone/ /ipad/ /mac/）与设备分发页（/）
 	handle {
-		root * /opt/arc-training/prototype
+		root * __ROOT__/dist
 		try_files {path} {path}/ /index.html
 		file_server
 	}
 
-	# env.js 每次都要新鲜（后台改配置后立刻生效）
-	@env path /env.js
+	# 安装相关文件必须拿最新的：manifest 改了不刷新，用户装到的还是旧版
+	@manifest path */manifest.webmanifest
+	header @manifest Cache-Control "no-cache"
+	@sw path */sw.js
+	header @sw Cache-Control "no-store"
+	# 前端连接配置（后台改完立刻生效）
+	@env path */env.js
 	header @env Cache-Control "no-store"
 
 	header {

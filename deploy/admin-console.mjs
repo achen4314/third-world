@@ -24,7 +24,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import dns from "node:dns/promises";
-import { execFile } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 
@@ -84,6 +84,15 @@ function writeEnv(c) {
     "};\n";
   const target = path.join(ROOT, "prototype", "env.js");
   fs.writeFileSync(target, out, "utf8");
+  // 真正对外服务的是 dist/<平台>/env.js，光改源文件不会生效，必须重新构建一次
+  const builder = path.join(ROOT, "build", "platforms.mjs");
+  if (fs.existsSync(builder)) {
+    try {
+      execFileSync(process.execPath, [builder], { cwd: ROOT, timeout: 30000, stdio: "pipe" });
+    } catch (e) {
+      throw new Error("env.js 已写入，但三端重新构建失败：" + String(e.stderr || e.message).slice(0, 300));
+    }
+  }
   return target;
 }
 

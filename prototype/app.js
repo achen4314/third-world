@@ -54,6 +54,23 @@
   };
   const SIZES = { iphone: [390, 844], ipad: [1024, 720], mac: [1440, 900] };
   const COLS = { iphone: 1, ipad: 2, mac: 3 };
+
+  /* ── 版本预设 ──────────────────────────────────────────
+   * 三端各自是独立构建：index.html 在加载 app.js 之前写入 window.ARC_PRESET。
+   * 独立构建里布局锁定为本机形态、外壳（顶栏与设备边框）不再渲染，
+   * 由系统全屏承载，避免「装到手机上却还套着一个 iPhone 画框」的观感。
+   * 预览构建不带 PRESET，保持评审用的切换能力。
+   */
+  const PRESET = (function () {
+    const p = window.ARC_PRESET || null;
+    if (!p) return { platform: null, standalone: false, lock: false, hint: false };
+    return {
+      platform: SIZES[p.platform] ? p.platform : null,
+      standalone: !!p.standalone,
+      lock: !!p.lock,
+      hint: !!p.hint
+    };
+  })();
   const V1RM = 0.30; // 仅当 state.calibrated 为真时参与计算（演示）
 
   /* ── 计算引擎（真实公式） ───────────────────────────── */
@@ -2591,6 +2608,12 @@
   /* ── 舞台缩放 ────────────────────────────────────────── */
   function fitStage() {
     const stage = document.getElementById("stage"), dev = document.getElementById("device");
+    if (PRESET.standalone) {
+      // 独立安装版：不要画框、不要缩放，铺满真实视口
+      dev.style.width = "100%"; dev.style.height = "100%";
+      dev.style.setProperty("--scale", "1");
+      return;
+    }
     const [w, h] = SIZES[state.platform];
     dev.style.width = w + "px"; dev.style.height = h + "px";
     const sw = stage.clientWidth - 48, sh = stage.clientHeight - 40;
@@ -2785,8 +2808,10 @@
   /* ── 启动（支持 ?platform=&theme=&role=&route= 深链，便于评审与截图） ── */
   (function initFromURL() {
     try {
+      if (PRESET.platform) state.platform = PRESET.platform;   // 版本预设优先
       const q = new URLSearchParams(location.search);
-      const p = q.get("platform"); if (p && SIZES[p]) state.platform = p;
+      const p = q.get("platform");
+      if (p && SIZES[p] && !PRESET.lock) state.platform = p;
       const t = q.get("theme"); if (t === "dark" || t === "light") state.theme = t;
       const r = q.get("role"); if (A.ROLES.some(x => x.id === r)) state.role = r;
       const route = q.get("route");
@@ -2806,6 +2831,39 @@
     window.ARC_LIVE.start();                    // SSE 仿真：1 Hz 增量推送
   }
   renderAll(); renderOverlay();
+  if (PRESET.standalone) document.body.classList.add("arc-standalone");
+  if (PRESET.lock) document.body.classList.add("arc-locked");
+  fitStage();
+
+  /* ── 版本自检 ──────────────────────────────────────────
+   * 三个构建共用同一套数据与算法，装错版本不会算错数，只是布局不对。
+   * 与其让人对着不合适的布局猜，不如直接给一条切换入口。
+   */
+  function platformSelfCheck() {
+    if (!PRESET.standalone || !PRESET.hint || !PRESET.platform) return;
+    var ua = navigator.userAgent || "";
+    var iPadOS = /Macintosh/.test(ua) && (navigator.maxTouchPoints || 0) > 1;
+    var actual = /iPhone|iPod/.test(ua) ? "iphone"
+      : (/iPad/.test(ua) || iPadOS) ? "ipad"
+      : /Macintosh|Mac OS X/.test(ua) ? "mac" : null;
+    if (!actual || actual === PRESET.platform) return;
+    var NAME = { iphone: "iPhone", ipad: "iPad", mac: "Mac" };
+    var el = document.createElement("div");
+    el.className = "plat-hint";
+    el.setAttribute("role", "status");
+    el.innerHTML = '<span>当前打开的是 ' + NAME[PRESET.platform] + ' 版，检测到本机为 ' + NAME[actual] +
+      '。两者数据与算法一致，换成 ' + NAME[actual] + ' 版布局更贴合。</span>' +
+      '<button type="button" data-goto>' + NAME[actual] + ' 版</button>' +
+      '<button type="button" class="ph-x" aria-label="关闭提示">✕</button>';
+    document.body.appendChild(el);
+    el.querySelector("[data-goto]").addEventListener("click", function () {
+      location.href = "../" + actual + "/";
+    });
+    el.querySelector(".ph-x").addEventListener("click", function () { el.remove(); });
+    // 只是提示，不该长期占位：9 秒后自行退场，用户随时可提前关闭
+    setTimeout(function () { if (el.isConnected) el.remove(); }, 9000);
+  }
+  platformSelfCheck();
 
   /* ── 接入层需要的几个口子（supabase-client.js / ui-flows.js 调用） ── */
   window.ARC_RELOAD = function () { renderAll(); renderOverlay(); };

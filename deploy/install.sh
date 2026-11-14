@@ -61,6 +61,16 @@ NODE_BIN=$(command -v node)
 NODE_MAJOR=$("$NODE_BIN" -p 'process.versions.node.split(".")[0]')
 [[ "$NODE_MAJOR" -ge 18 ]] || die "node 版本过低（$("$NODE_BIN" -v)），需要 ≥18"
 
+# 三端独立版本构建：dist/iphone、dist/ipad、dist/mac + 分发页
+# 三个版本共用同一份 JS/CSS 字节，构建脚本会自检这一点，不一致直接失败。
+if [[ -f "$ROOT/build/platforms.mjs" ]]; then
+  echo "── 0/7 构建三端版本 ───────────────────────────────"
+  ( cd "$ROOT" && "$NODE_BIN" build/platforms.mjs ) || die "三端构建失败（见上面输出）"
+else
+  warn "找不到 build/platforms.mjs，假定 dist/ 已由本地构建后一并上传"
+fi
+[[ -f "$ROOT/dist/index.html" ]] || die "缺少 $ROOT/dist/index.html（构建没有产出）"
+
 # 这台机器还跑着 Dify（实测内存 2.67/4.0 GiB），别把内存吃满把人家的服务 OOM 掉
 MEM_AVAIL_MB=$(awk '/MemAvailable/{printf "%d", $2/1024}' /proc/meminfo 2>/dev/null || echo 9999)
 if [[ "$MEM_AVAIL_MB" -lt 300 ]]; then
@@ -84,10 +94,10 @@ if ! id arcadmin >/dev/null 2>&1; then
   green "    ✓ 已创建专用用户 arcadmin（nologin）"
 fi
 usermod -aG systemd-journal arcadmin 2>/dev/null || true
-chown -R arcadmin:arcadmin "$ROOT/prototype" "$ROOT/deploy/runtime"
-chmod 755 "$ROOT" "$ROOT/prototype"
-chmod 644 "$ROOT"/prototype/*.js "$ROOT"/prototype/*.html "$ROOT"/prototype/*.css 2>/dev/null || true
-green "    ✓ $ROOT 就绪（属主 arcadmin，root 只读）"
+chown -R arcadmin:arcadmin "$ROOT/dist" "$ROOT/deploy/runtime"
+chmod 755 "$ROOT" "$ROOT/dist" "$ROOT"/dist/*
+chmod 644 "$ROOT"/dist/*/*.js "$ROOT"/dist/*/*.html "$ROOT"/dist/*/*.css "$ROOT"/dist/*/*.webmanifest 2>/dev/null || true
+green "    ✓ $ROOT/dist 就绪（属主 arcadmin，root 只读）"
 
 echo "── 2/7 后台口令 ───────────────────────────────────"
 umask 077
@@ -115,6 +125,13 @@ window.ARC_ENV = {
 EOF
   chmod 644 "$ROOT/prototype/env.js"
   green "    ✓ env.js 已生成"
+fi
+
+# env.js 是唯一被三个版本各自复制一份的配置：改完必须重新构建，否则线上仍读旧配置
+if [[ -f "$ROOT/build/platforms.mjs" ]]; then
+  ( cd "$ROOT" && "$NODE_BIN" build/platforms.mjs >/dev/null ) || die "配置写入后重新构建失败"
+  chown -R arcadmin:arcadmin "$ROOT/dist"
+  green "    ✓ 三端版本已带上最新配置"
 fi
 
 echo "── 4/7 控制台服务 ─────────────────────────────────"
@@ -151,7 +168,7 @@ if [[ -f "$CADDY_CONF" ]] && ! grep -q 'ARC-MANAGED' "$CADDY_CONF"; then
   warn "发现已有 Caddyfile（非本项目生成），已备份到 $BAK —— 若它服务着别的东西，请先确认再继续"
 fi
 if [[ "$MODE" == "https" ]]; then
-  sed "s/__DOMAIN__/$DOMAIN/g" "$ROOT/deploy/Caddyfile" > /etc/caddy/Caddyfile
+  sed -e "s/__DOMAIN__/$DOMAIN/g" -e "s#__ROOT__#$ROOT#g" "$ROOT/deploy/Caddyfile" > /etc/caddy/Caddyfile
   chown -R caddy:caddy /var/log/caddy 2>/dev/null || true
   caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null 2>&1 \
     || { caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile; die "Caddyfile 校验失败"; }
@@ -159,7 +176,7 @@ if [[ "$MODE" == "https" ]]; then
   systemctl reload caddy 2>/dev/null || systemctl restart caddy
   green "    ✓ Caddy 已接管 443（证书自动申请；80 未动）"
 else
-  install -m 644 "$ROOT/deploy/Caddyfile.http" /etc/caddy/Caddyfile
+  sed -e "s#__ROOT__#$ROOT#g" "$ROOT/deploy/Caddyfile.http" > /etc/caddy/Caddyfile
   systemctl enable caddy >/dev/null 2>&1
   systemctl reload caddy 2>/dev/null || systemctl restart caddy
   green "    ✓ Caddy 已在 :8080 提供 HTTP（证书稍后补）"
@@ -178,12 +195,20 @@ probe() { # label url extra...
 if [[ "$MODE" == "https" ]]; then
   probe "控制台页 /admin/"      "https://127.0.0.1/admin/"   -H "Host: $DOMAIN"
   probe "无口令 /api/config"    "https://127.0.0.1/api/config" -H "Host: $DOMAIN"   # 期望 401
-  probe "静态站 /"              "https://127.0.0.1/"         -H "Host: $DOMAIN"
-  probe "env.js"                "https://127.0.0.1/env.js"   -H "Host: $DOMAIN"
+  probe "分发页 /"              "https://127.0.0.1/"         -H "Host: $DOMAIN"
+  probe "iPhone 版 /iphone/"    "https://127.0.0.1/iphone/"  -H "Host: $DOMAIN"
+  probe "iPad 版 /ipad/"        "https://127.0.0.1/ipad/"    -H "Host: $DOMAIN"
+  probe "Mac 版 /mac/"          "https://127.0.0.1/mac/"     -H "Host: $DOMAIN"
+  probe "iPhone manifest"       "https://127.0.0.1/iphone/manifest.webmanifest" -H "Host: $DOMAIN"
+  probe "iPhone sw.js"          "https://127.0.0.1/iphone/sw.js" -H "Host: $DOMAIN"
+  probe "环境配置 env.js"       "https://127.0.0.1/mac/env.js" -H "Host: $DOMAIN"
 else
   probe "控制台页 /admin/"      "http://127.0.0.1:8080/admin/"
   probe "无口令 /api/config"    "http://127.0.0.1:8080/api/config"   # 期望 401
-  probe "静态站 /"              "http://127.0.0.1:8080/"
+  probe "分发页 /"              "http://127.0.0.1:8080/"
+  probe "iPhone 版 /iphone/"    "http://127.0.0.1:8080/iphone/"
+  probe "iPad 版 /ipad/"        "http://127.0.0.1:8080/ipad/"
+  probe "Mac 版 /mac/"          "http://127.0.0.1:8080/mac/"
 fi
 
 echo "── 7/8 取证比对：确认没有打扰另一个挂载点 ─────────"
