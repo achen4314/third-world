@@ -156,6 +156,7 @@
       (U.busy ? "处理中…" : (isSignup ? "创建账号" : "登录")) + '</button>' +
       '<div class="arcui-links">' +
       (isSignup ? "" : '<button data-u="forgot">忘记密码</button>') +
+      (isSignup ? "" : '<button data-u="resend">没收到确认邮件？重发</button>') +
       '</div>' +
       '<div class="arcui-foot">登录即表示同意《服务条款》与《隐私政策》。健康数据属敏感个人信息，仅用于训练分析，可随时导出或删除。</div>',
       false
@@ -390,7 +391,10 @@
           U.busy = false;
           if (r.needConfirm) {
             U.tab = "signin";
-            U.msg = "注册成功。该邮箱需要先点确认链接才能登录；若没收到邮件，请让管理员在后台确认（见交付说明）。";
+            U.msg = "注册成功，确认邮件已发到 " + mail + "。点邮件里的链接会自动回到这里并登录；若几分钟没收到，点下方「没收到确认邮件？重发」。";
+            if (r.redirectRejected) {
+              U.msg += " 注意：本站的回跳地址还没在后台登记，邮件可能把你带到旧页面；遇到这种情况直接回来用邮箱密码登录即可。";
+            }
             U.err = "";
           } else {
             sync();
@@ -404,6 +408,21 @@
         }
         render();
         return;
+      }
+      if (u === "resend") {
+        var rmail = val("fEmail") || U.lastEmail;
+        if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(rmail)) {
+          U.err = "先在邮箱框里填你要确认的邮箱"; U.msg = ""; render(); return;
+        }
+        U.lastEmail = rmail;
+        U.busy = true; U.err = ""; U.msg = ""; render();
+        try {
+          await DB.resendConfirmation(rmail);
+          U.msg = "确认邮件已重新发送到 " + rmail + "。点开链接后会自动回到这里并登录。";
+        } catch (e) {
+          U.err = "重发失败：" + (e && e.message ? e.message : String(e));
+        }
+        U.busy = false; render(); return;
       }
       if (u === "clear-override") {
         // 在登录浮层里也能清：否则「连错库」的人被困在登录框里，点不到被遮住的标签
@@ -643,7 +662,16 @@
     window.addEventListener("offline", function () { toast("网络已断开，界面保留最后一次同步的数据", "warn"); });
     window.addEventListener("online", function () { toast("网络已恢复"); if (DB.isLive()) DB.reload(); });
     DB.onChange(function () { if (U.view === "record" || U.view === "panel") render(); });
-    DB.init().then(function () { sync(); afterRender(); });
+    DB.init().then(function () {
+      // 邮件确认链接跳回来时，必须给一句明确的反馈。服务端其实已经确认成功，
+      // 但过去应用不接管会话也不说话，用户看到的就是「点了没反应」。
+      var cb = DB.state && DB.state.authCallback;
+      if (cb) {
+        if (cb.ok) { U.msg = cb.message; toast(cb.message); }
+        else { U.err = cb.message; }
+      }
+      sync(); afterRender();
+    });
   });
   DB.onChange(function () { sync(); });
 

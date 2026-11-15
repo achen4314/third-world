@@ -47,7 +47,8 @@
     counts: {},
     regMismatch: 0,
     needOnboarding: false,
-    onboardingReason: ""
+    onboardingReason: "",
+    authCallback: null       // 邮箱确认 / 密码重置链接跳回本页时的结果，供界面明确反馈
   };
 
   var subs = [];
@@ -101,6 +102,7 @@
           error: S.error,
           truncated: S.truncated,
           lastSync: S.lastSync,
+          authCallback: S.authCallback,
           reason: S.reason
         });
       } catch (e) { /* noop */ }
@@ -214,6 +216,59 @@
     }
   }
 
+  /* ── 邮箱确认 / 密码重置回调 ─────────────────────────────────────────
+   * GoTrue 验证完邮件里的 token 后会 302 回 redirect_to，并把会话放在 URL 上：
+   *   implicit : #access_token=…&refresh_token=…&expires_in=…&type=signup
+   *   PKCE     : ?code=…
+   *   出错     : #error=…&error_description=…&error_code=otp_expired
+   * 过去这里完全没有解析：账号其实已经在服务端确认成功（库里 email_confirmed_at
+   * 有值、last_sign_in_at 也更新了），但应用既不接管会话，也不给任何提示 ——
+   * 用户看到的就是「点了确认邮件，什么反应都没有」。 */
+  var AUTH_KEYS = ["access_token", "refresh_token", "expires_in", "token_type",
+                   "type", "code", "error", "error_code", "error_description", "message"];
+  function readAuthCallback() {
+    var hp = new URLSearchParams(String(location.hash || "").replace(/^#/, ""));
+    var qs = new URLSearchParams(location.search || "");
+    var touched = AUTH_KEYS.some(function (k) { return hp.has(k) || qs.has(k); });
+    if (!touched) return null;
+
+    var out;
+    var errDesc = hp.get("error_description") || qs.get("error_description") || hp.get("error") || qs.get("error");
+    if (errDesc) {
+      out = { ok: false, kind: "error", message: "链接已失效：" + String(errDesc).replace(/\+/g, " ") + "。请重新发送确认邮件。" };
+    } else if (hp.get("access_token")) {
+      out = {
+        ok: true, kind: "session",
+        session: {
+          access_token: hp.get("access_token"),
+          refresh_token: hp.get("refresh_token") || "",
+          expires_in: Number(hp.get("expires_in") || 3600),
+          token_type: hp.get("token_type") || "bearer"
+        },
+        type: hp.get("type") || "signup",
+        message: hp.get("type") === "recovery" ? "密码已重置，已为你登录。" : "邮箱已确认，已为你登录。"
+      };
+    } else if (hp.get("code") || qs.get("code")) {
+      out = { ok: false, kind: "pkce", message: "确认链接需要在最初注册的那个浏览器标签页中打开。也可以直接用邮箱和密码登录。" };
+    } else if (hp.get("type") === "signup" || qs.get("type") === "signup" || qs.get("message")) {
+      out = { ok: true, kind: "confirmed", message: "邮箱已确认，请用邮箱和密码登录。" };
+    } else {
+      out = { ok: false, kind: "unknown", message: "确认链接没有带回登录信息。若邮箱已确认，直接登录即可。" };
+    }
+
+    // token 不能留在地址栏、浏览器历史或 Referer 里
+    try {
+      AUTH_KEYS.forEach(function (k) { qs.delete(k); });
+      var q = qs.toString();
+      history.replaceState(null, "", location.pathname + (q ? "?" + q : ""));
+    } catch (e) { /* noop */ }
+    return out;
+  }
+  function authRedirect() {
+    // 回到「当前这一页」而不是站点根：分发页会二次跳转，hash 在跳转中会被丢掉。
+    return String(location.href).split("#")[0];
+  }
+
   /* ── 会话 ───────────────────────────────────────────────────────────── */
   function setSession(d) {
     var exp = d.expires_at || (Math.floor(Date.now() / 1000) + (d.expires_in || 3600));
@@ -264,19 +319,52 @@
     return S.mode;
   }
 
+  function isRedirectReject(e) {
+    return !!(e && /redirect/i.test(String((e.body || "") + (e.message || ""))));
+  }
+
   async function signUp(email, password, displayName) {
     if (!S.key) throw new Error("还没有配置 publishable key");
-    var d = await http("/auth/v1/signup", {
-      method: "POST", auth: false,
-      body: { email: String(email || "").trim(), password: password, data: { display_name: displayName || "" } }
-    });
+    var body = {
+      email: String(email || "").trim(),
+      password: password,
+      data: { display_name: displayName || "" },
+      email_redirect_to: authRedirect()
+    };
+    var d, rejected = false;
+    try {
+      d = await http("/auth/v1/signup", { method: "POST", auth: false, body: body });
+    } catch (e) {
+      // 项目若还没把本站加进 Redirect URLs 白名单，GoTrue 会拒绝带 redirect 的注册。
+      // 此时退回默认 Site URL，注册本身仍然要成功——只是确认链接可能落到旧地址，
+      // 所以把这个事实返回给界面，明确提醒去后台补白名单。
+      if (!isRedirectReject(e)) throw e;
+      rejected = true;
+      delete body.email_redirect_to;
+      d = await http("/auth/v1/signup", { method: "POST", auth: false, body: body });
+    }
     // 开了邮箱确认时，signup 只返回 user，没有 access_token
     if (d && d.access_token) {
       setSession(d);
       await boot();
       return { needConfirm: false };
     }
-    return { needConfirm: true, email: String(email || "").trim() };
+    return { needConfirm: true, email: String(email || "").trim(), redirectRejected: rejected };
+  }
+
+  async function resendConfirmation(email) {
+    if (!S.key) throw new Error("还没有配置 publishable key");
+    var base = { type: "signup", email: String(email || "").trim() };
+    try {
+      await http("/auth/v1/resend", {
+        method: "POST", auth: false,
+        body: Object.assign({}, base, { options: { email_redirect_to: authRedirect() } })
+      });
+    } catch (e) {
+      if (!isRedirectReject(e)) throw e;
+      await http("/auth/v1/resend", { method: "POST", auth: false, body: base });
+    }
+    return true;
   }
 
   async function signOut() {
@@ -297,7 +385,16 @@
   }
 
   async function resetPassword(email) {
-    await http("/auth/v1/recover", { method: "POST", auth: false, body: { email: String(email || "").trim() } });
+    var base = { email: String(email || "").trim() };
+    try {
+      await http("/auth/v1/recover", {
+        method: "POST", auth: false,
+        body: Object.assign({}, base, { redirect_to: authRedirect() })
+      });
+    } catch (e) {
+      if (!isRedirectReject(e)) throw e;
+      await http("/auth/v1/recover", { method: "POST", auth: false, body: base });
+    }
     return true;
   }
 
@@ -1170,6 +1267,11 @@
       var saved = lsGet(LS_SESS);
       if (saved) { try { S.session = JSON.parse(saved); } catch (e) { S.session = null; } }
 
+      // 邮件确认链接跳回本页时，链接上的会话优先于本地旧会话；
+      // 同时把「确认成功 / 链接失效」记进状态，由界面明确说出来。
+      S.authCallback = readAuthCallback();
+      if (S.authCallback && S.authCallback.session) setSession(S.authCallback.session);
+
       if (!S.key) {
         S.mode = "demo";
         S.reason = "未配置 publishable key（可在「数据源」里粘贴一次）";
@@ -1193,6 +1295,8 @@
     signIn: signIn,
     signUp: signUp,
     signOut: signOut,
+    resendConfirmation: resendConfirmation,
+    authRedirect: authRedirect,
     resetPassword: resetPassword,
     changePassword: changePassword,
     reload: load,

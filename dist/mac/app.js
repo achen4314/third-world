@@ -2884,6 +2884,7 @@
     state.dbError = o.error || null;
     state.dbTruncated = !!o.truncated;
     state.dbLastSync = o.lastSync || null;
+    state.dbAuthCallback = o.authCallback || null;
     state.dbReason = o.reason || "";
   };
   window.ARC_GOTO = navigate;
