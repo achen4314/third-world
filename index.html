@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>第三世界 · 训练负荷与就绪度</title>
+<meta name="theme-color" content="#f5f5f7">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" type="image/png" sizes="192x192" href="./mac/icons/icon-192.png">
+<style>
+  :root { --bg:#f5f5f7; --surface:#fff; --text:#1d1d1f; --text2:rgba(60,60,67,.62);
+    --text3:rgba(60,60,67,.4); --line:rgba(60,60,67,.12); --accent:#007aff;
+    --font:-apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Helvetica Neue",Arial,sans-serif; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#0b0b0d; --surface:#1c1c1e; --text:#f5f5f7;
+    --text2:rgba(235,235,245,.62); --text3:rgba(235,235,245,.38); --line:rgba(255,255,255,.12); --accent:#0a84ff; } }
+  * { box-sizing: border-box; }
+  body { margin:0; min-height:100vh; background:var(--bg); color:var(--text); font-family:var(--font);
+    display:flex; align-items:center; justify-content:center; padding:32px 20px calc(32px + env(safe-area-inset-bottom)); }
+  .wrap { width:100%; max-width:880px; }
+  .brand { display:flex; align-items:center; gap:12px; margin-bottom:6px; }
+  .mark { width:44px; height:44px; border-radius:13px; background:linear-gradient(160deg,#0a84ff,#0046b8);
+    display:grid; place-items:center; color:#fff; font-weight:700; font-size:17px; letter-spacing:.02em; }
+  h1 { font-size:22px; margin:0; letter-spacing:-.01em; }
+  .sub { color:var(--text2); font-size:13px; margin:2px 0 0; }
+  .hint { margin:18px 0 10px; font-size:13px; color:var(--text2); }
+  .hint b { color:var(--text); font-weight:600; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px; }
+  .card { display:flex; flex-direction:column; gap:8px; padding:16px; border-radius:16px;
+    background:var(--surface); border:1px solid var(--line); text-decoration:none; color:inherit;
+    transition:transform .18s ease, box-shadow .18s ease; }
+  .card:hover { transform:translateY(-2px); box-shadow:0 10px 30px rgba(0,0,0,.08); }
+  .card.rec { border-color:var(--accent); box-shadow:0 0 0 1px var(--accent) inset; }
+  .card-top { display:flex; align-items:center; justify-content:space-between; }
+  .badge { font-size:13px; font-weight:600; }
+  .cols { font-size:11px; color:var(--text3); }
+  .card-note { font-size:12px; color:var(--text2); line-height:1.5; }
+  .card-go { margin-top:auto; font-size:12px; color:var(--accent); }
+  .foot { margin-top:22px; font-size:12px; color:var(--text3); line-height:1.7; }
+  .foot code { background:var(--line); padding:1px 5px; border-radius:5px; }
+  .toast { position:fixed; left:50%; bottom:28px; transform:translateX(-50%); background:var(--surface);
+    border:1px solid var(--line); border-radius:12px; padding:10px 14px; font-size:13px;
+    box-shadow:0 12px 40px rgba(0,0,0,.14); opacity:0; transition:opacity .25s; pointer-events:none; }
+  .toast.on { opacity:1; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="brand">
+    <div class="mark">第</div>
+    <div>
+      <h1>第三世界</h1>
+      <div class="sub">训练负荷与就绪度 · 版本 305f66fa</div>
+    </div>
+  </div>
+
+  <p class="hint" id="hint">正在识别设备…</p>
+
+  <div class="grid">
+
+      <a class="card" href="./iphone/" data-target="iphone">
+        <div class="card-top">
+          <span class="badge">iPhone</span>
+          <span class="cols">1 列</span>
+        </div>
+        <div class="card-note">竖屏 · 单列 · 底部标签栏</div>
+        <div class="card-go">进入 iPhone 版 →</div>
+      </a>
+      <a class="card" href="./ipad/" data-target="ipad">
+        <div class="card-top">
+          <span class="badge">iPad</span>
+          <span class="cols">2 列</span>
+        </div>
+        <div class="card-note">横竖屏 · 双列 · 侧边栏</div>
+        <div class="card-go">进入 iPad 版 →</div>
+      </a>
+      <a class="card" href="./mac/" data-target="mac">
+        <div class="card-top">
+          <span class="badge">Mac</span>
+          <span class="cols">3 列</span>
+        </div>
+        <div class="card-note">桌面窗口 · 三列 · 侧边栏 + 顶栏</div>
+        <div class="card-go">进入 Mac 版 →</div>
+      </a>
+  </div>
+
+  <div class="foot">
+    三个版本共用同一套数据与算法，记录、指标与结论完全一致，只有布局随设备不同。<br>
+    安装：iPhone / iPad 用 Safari 打开对应版本 → 分享 → <code>添加到主屏幕</code>；Mac 用 Safari 打开 → 文件 → <code>添加到程序坞</code>，或 Chrome 地址栏的安装按钮。<br>
+    <a href="#" id="again" style="color:var(--accent);text-decoration:none">重新检测设备并跳转</a>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+(function () {
+  var ua = navigator.userAgent || "";
+  var touch = (navigator.maxTouchPoints || 0) > 1;
+  var ipadOS = /Macintosh/.test(ua) && touch;                 // iPadOS 13+ 伪装成 Mac
+  var device = /iPhone|iPod/.test(ua) ? "iphone"
+    : (/iPad/.test(ua) || ipadOS) ? "ipad"
+    : /Macintosh|Mac OS X/.test(ua) ? "mac"
+    : (window.matchMedia("(max-width: 500px)").matches ? "iphone"
+      : window.matchMedia("(max-width: 1100px)").matches ? "ipad" : "mac");
+  var NAME = { iphone: "iPhone", ipad: "iPad", mac: "Mac" };
+  var manual = new URLSearchParams(location.search).get("choose") === "1";
+  // 访问参数（例如预览通道的 sharecode）必须跟着跳转带走，否则下一跳会被挡在门外
+  var keep = location.search || "";
+
+  var hint = document.getElementById("hint");
+  hint.innerHTML = "检测到本机为 <b>" + NAME[device] + "</b>，已为你标记对应版本。";
+
+  var rec = document.querySelector('[data-target="' + device + '"]');
+  if (rec) rec.classList.add("rec");
+
+  if (keep) {
+    document.querySelectorAll("a.card").forEach(function (a) {
+      a.href = a.getAttribute("href") + keep;
+    });
+  }
+
+  if (!manual) {
+    // 只在直接访问根路径时自动跳转；带 ?choose=1 时保留选择页，便于人工核对
+    setTimeout(function () { location.replace("./" + device + "/" + keep); }, 650);
+  }
+
+  document.getElementById("again").addEventListener("click", function (e) {
+    e.preventDefault();
+    location.href = "./" + device + "/" + keep;
+  });
+
+  document.querySelectorAll(".card").forEach(function (a) {
+    a.addEventListener("click", function () {
+      try { localStorage.setItem("arc.platform", a.dataset.target); } catch (err) {}
+    });
+  });
+})();
+</script>
+</body>
+</html>

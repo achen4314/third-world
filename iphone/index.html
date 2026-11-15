@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light" data-workspace="athlete">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>第三世界 · 训练负荷</title>
+<meta name="description" content="训练负荷、就绪度与跳跃测试的一体化记录与解读。">
+<meta name="theme-color" content="#f5f5f7">
+<meta name="color-scheme" content="light dark">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="第三世界">
+<meta name="format-detection" content="telephone=no">
+<link rel="stylesheet" href="styles.css?v=305f66fa">
+</head>
+<body>
+
+<!-- 顶部工具条：切换显示尺寸 / 视角 / 数据源 / 外观 -->
+<div class="console">
+  <div class="console-brand">
+    <div class="console-mark">第</div>
+    <div>
+      <div class="console-title">第三世界</div>
+      <div class="console-sub">训练负荷与就绪度</div>
+    </div>
+    <span class="demo-tag">未连接数据源</span>
+  </div>
+  <div class="console-spacer"></div>
+  <div class="console-group">
+    <span class="console-label">显示</span>
+    <div class="seg" id="platformSeg"></div>
+  </div>
+  <div class="console-group">
+    <span class="console-label">视角</span>
+    <select class="sel" id="roleSel" aria-label="当前角色">
+      <option value="athlete">运动员</option>
+      <option value="coach">教练</option>
+      <option value="head_coach">主教练</option>
+      <option value="medical">队医 / 康复</option>
+      <option value="analyst">科研 / 数据</option>
+      <option value="admin">管理员</option>
+      <option value="observer">只读观察者</option>
+    </select>
+  </div>
+  <div class="console-group">
+    <span class="console-label">数据源</span>
+    <div id="dbHost"></div>
+  </div>
+  <div class="console-group">
+    <button class="icon-btn" id="themeBtn" title="切换浅色 / 深色" aria-label="切换外观"></button>
+  </div>
+</div>
+
+<div class="stage" id="stage">
+  <div class="device p-mac" id="device">
+    <div class="device-bar">
+      <div class="traffic"><i></i><i></i><i></i></div>
+      <div class="device-bar-title">第三世界</div>
+      <div style="width:52px"></div>
+    </div>
+    <div class="device-notch"></div>
+    <div class="app platform-mac" id="app">
+      <aside class="sidebar" id="sidebar"></aside>
+      <div class="app-main">
+        <header class="topbar" id="topbar"></header>
+        <nav class="subnav" id="subnav"></nav>
+        <main class="content" id="content"></main>
+      </div>
+      <nav class="tabbar" id="tabbar"></nav>
+      <div class="overlay-host" id="overlay"></div>
+      <div class="toast-layer" id="toasts"></div>
+    </div>
+  </div>
+</div>
+
+<script>window.ARC_PRESET={"platform":"iphone","standalone":true,"lock":true,"hint":true,"build":"305f66fa"};</script>
+<script src="env.js?v=305f66fa"></script>
+<script src="data.js?v=305f66fa"></script>
+<script src="live.js?v=305f66fa"></script>
+<script src="app.js?v=305f66fa"></script>
+<script src="supabase-client.js?v=305f66fa"></script>
+<script src="ui-flows.js?v=305f66fa"></script>
+<script>
+if ("serviceWorker" in navigator) {
+  addEventListener("load", function () {
+    navigator.serviceWorker.register("sw.js").catch(function () { /* 离线能力缺失不影响在线使用 */ });
+  });
+}
+</script>
+</body>
+</html>

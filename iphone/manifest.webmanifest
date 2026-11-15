@@ -1,0 +1,43 @@
+{
+  "id": "/iphone/",
+  "name": "第三世界 · 训练负荷",
+  "short_name": "第三世界",
+  "description": "训练负荷、就绪度与跳跃测试的一体化记录与解读。",
+  "start_url": "/iphone/",
+  "scope": "/iphone/",
+  "display": "standalone",
+  "display_override": [
+    "standalone",
+    "minimal-ui"
+  ],
+  "orientation": "portrait",
+  "background_color": "#f5f5f7",
+  "theme_color": "#f5f5f7",
+  "lang": "zh-CN",
+  "dir": "ltr",
+  "categories": [
+    "health",
+    "sports",
+    "productivity"
+  ],
+  "icons": [
+    {
+      "src": "icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}
