@@ -343,10 +343,22 @@ try {
       return out;
     });
 
-    const mismatch = FE_TABLES.filter(t => authCounts[t] !== svc[t]);
-    add("C 同步", "登录用户可见行数 = 服务端行数", mismatch.length === 0 ? true : false,
-      mismatch.length ? mismatch.map(t => `${t}: ${svc[t]}→${authCounts[t]}`).join("; ") : `${FE_TABLES.length} 张表全一致`,
-      "全一致", "不一致通常是 RLS 策略漏了某类角色");
+    // 旧断言要求「可见行数 = 服务端行数」，那是库里只有 1 个组织时的假设。
+    // 真实上线后有多个组织，RLS 本就应把其他组织的行过滤掉；等于全量反而说明策略漏了。
+    const bad = FE_TABLES.filter(t => {
+      const a = authCounts[t];
+      return typeof a !== "number" || a > svc[t];
+    });
+    const mustSee = ["activities", "athletes", "daily_metrics", "memberships"];
+    const emptyBusiness = mustSee.filter(t => Number(authCounts[t]) === 0 && svc[t] > 0);
+    const filtered = FE_TABLES.filter(t => Number(authCounts[t]) < svc[t]);
+    add("C 同步", "RLS 生效：可见行数不超过服务端、业务表不为空",
+      bad.length === 0 && emptyBusiness.length === 0 ? true : false,
+      `${FE_TABLES.length} 张表 · ${filtered.length} 张被正常过滤` +
+        (bad.length ? " · 异常 " + bad.join(",") : "") +
+        (emptyBusiness.length ? " · 业务表全空 " + emptyBusiness.join(",") : ""),
+      "无异常且业务表可见",
+      "多组织下 RLS 过滤是预期行为；要求「全一致」是过时的单组织假设");
 
     // RPC 与表值对账：摘要里的 acwr 必须等于 daily_metrics 当日 acwr
     const rpcCheck = await inRollback(async () => {
