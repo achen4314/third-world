@@ -84,7 +84,7 @@
     { date: "11/12", name: "节奏跑 20' + 6×400m", sport: "跑步", dur: "72 min", tl: 0, method: "休息日", rpe: 0, src: "manual" },
     { date: "11/11", name: "有氧基础 Z2", sport: "跑步", dur: "64 min", tl: 84, method: "TRIMP", rpe: 5, src: "device" },
     { date: "11/10", name: "室内骑行 · 阈值间歇", sport: "骑行", dur: "81 min", tl: 138, method: "TSS", rpe: 8, src: "device" },
-    { date: "11/09", name: "跳跃测试 + 活动度筛查", sport: "测试", dur: "35 min", tl: 110, method: "sRPE", rpe: 4, src: "import" },
+    { date: "11/09", name: "低强度恢复跑", sport: "跑步", dur: "35 min", tl: 110, method: "sRPE", rpe: 4, src: "import" },
     { date: "11/08", name: "长距离有氧", sport: "跑步", dur: "104 min", tl: 0, method: "休息日", rpe: 0, src: "manual" },
     { date: "11/07", name: "上肢力量 + 核心", sport: "力量", dur: "55 min", tl: 98, method: "sRPE", rpe: 6, src: "device" }
   ];
@@ -208,7 +208,7 @@
     { id: "today", label: "今日", icon: "today", children: [] },
     { id: "train", label: "训练", icon: "train", children: [
       { id: "calendar", label: "训练日历" }, { id: "session", label: "单次训练" },
-      { id: "plan", label: "周期计划" }, { id: "library", label: "课库与模板" },
+      { id: "plan", label: "周期计划" }, { id: "library", label: "训练方案库" },
       { id: "goals", label: "比赛与目标" }
     ] },
     { id: "analyze", label: "分析", icon: "analyze", children: [
@@ -301,10 +301,38 @@
     { group: "筛查", items: ["踝背屈 ROM", "Nordic 断点角", "Wellness 问卷", "力-时间曲线"] }
   ];
 
+  /* 训练模块专用：可选训练类型与可自行搭配的方案结构。
+   * 这里只定义「结构」（类型 + 建议时长），不含任何成绩、负荷或历史数值；
+   * 实际 RPE 与时长由用户填写，保存后才产生 TL。测试项目一律不在此列。 */
+  const TRAIN_TYPES = [
+    { id: "strength", label: "力量", hint: "抗阻 / 爆发力 / 器械" },
+    { id: "run", label: "跑步", hint: "轻松跑 / 节奏 / 间歇" },
+    { id: "bike", label: "骑行", hint: "耐力 / 阈值 / 功率" },
+    { id: "swim", label: "游泳", hint: "技术 / 有氧" },
+    { id: "ball", label: "球类", hint: "专项 / 对抗 / 技战术" },
+    { id: "functional", label: "功能性 / 体能", hint: "循环 / 核心 / 移动" },
+    { id: "recovery", label: "恢复 / 低强度", hint: "拉伸 / 低强度活动" },
+    { id: "other", label: "其他", hint: "自行注明的训练" }
+  ];
+
+  /* 预设搭配方案：只是「段的组合建议」，不是已发生的训练记录。
+   * seg = [训练类型 id, 建议分钟, 建议 RPE]，载入后可逐段修改或增删。 */
+  const TRAIN_PRESETS = [
+    { id: "p-strength", name: "力量主课", note: "热身 + 主训练 + 放松", seg: [["recovery", 10, 2], ["strength", 45, 7], ["recovery", 10, 2]] },
+    { id: "p-endurance", name: "有氧耐力", note: "中低强度持续", seg: [["recovery", 10, 2], ["run", 50, 6], ["recovery", 10, 2]] },
+    { id: "p-interval", name: "速度间歇", note: "高强度分段", seg: [["recovery", 15, 3], ["run", 30, 8], ["recovery", 10, 2]] },
+    { id: "p-threshold", name: "骑行阈值", note: "稳态阈值", seg: [["recovery", 10, 2], ["bike", 60, 7], ["recovery", 10, 2]] },
+    { id: "p-recovery", name: "恢复日", note: "只安排低强度", seg: [["recovery", 30, 2]] },
+    { id: "p-mixed", name: "综合体能", note: "体能 + 专项混合", seg: [["recovery", 10, 3], ["functional", 25, 6], ["ball", 25, 6], ["recovery", 10, 2]] },
+    { id: "p-swim", name: "游泳技术", note: "技术为主", seg: [["recovery", 10, 2], ["swim", 45, 5], ["recovery", 5, 2]] },
+    { id: "p-prematch", name: "赛前激活", note: "短时高质量", seg: [["recovery", 15, 3], ["ball", 20, 8], ["recovery", 10, 2]] }
+  ];
+
   window.ARC = {
     DATES, DATES_FULL, TL_BASE, RMSSD_BASE, SLEEP, VBT_SETS, JUMPS, DEVICES,
     SOURCES, SESSIONS, PLAN_BLOCKS, ATHLETES, AUDIT, RULES, METRICS, NAV,
     ADMIN_NAV, ROLES, ROLE_MAP, PERMISSIONS, BOUNDARIES, TEST_PROTOCOLS,
+    TRAIN_TYPES, TRAIN_PRESETS,
     G: 9.81
   };
 })();

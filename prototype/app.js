@@ -401,7 +401,16 @@
         '<h2 class="hero-title">' + esc(s.title) + '</h2>' +
         '<p class="hero-lead">' + esc(s.lead) + '</p>' +
         '<div class="hero-evidence">' + s.evidence.map(e => '<div class="ev"><div class="ev-label">' + esc(e.label) + '</div><div class="ev-value">' + esc(e.value) + '</div><div class="ev-detail">' + esc(e.detail) + "</div></div>").join("") + '</div>' +
-        '<div class="hero-actions">' + (s.actions || []).map(a => '<button class="btn ' + (a.primary ? "primary" : "") + '" data-act="' + (a.sheet ? "sheet" : "nav") + '" ' + (a.sheet ? 'data-sheet="' + a.sheet + '"' + (a.id ? ' data-id="' + a.id + '"' : "") : 'data-route="' + a.route + '"') + '>' + esc(a.label) + '</button>').join("") + '</div></div>';
+        '<div class="hero-actions">' + (s.actions || []).map(function (a) {
+          // 与页面级 actions 保持一致：支持 act / sheet / route 三种。
+          // 少了 act 分支时，「记录测试」会被当成 nav 跳到 undefined，直接退回今日页。
+          const attrs = a.act
+            ? 'data-act="' + esc(a.act) + '"' + (a.id ? ' data-id="' + esc(a.id) + '"' : "")
+            : (a.sheet
+              ? 'data-act="sheet" data-sheet="' + esc(a.sheet) + '"' + (a.id ? ' data-id="' + esc(a.id) + '"' : "")
+              : 'data-act="nav" data-route="' + esc(a.route) + '"');
+          return '<button class="btn ' + (a.primary ? "primary" : "") + '" ' + attrs + '>' + esc(a.label) + '</button>';
+        }).join("") + '</div></div>';
     }
     if (s.type === "metrics") {
       return '<div class="' + spanCls(s.span) + '" ' + delay + '><div class="metrics">' + s.items.map(metricCard).join("") + '</div></div>';
@@ -487,10 +496,24 @@
     const tl = getTL().slice(-14);
     return tl.map(v => v === null ? null : v);
   }
+  /* 训练模块只呈现 TL 与 ACWR。CTL / ATL 是 ACWR 的内部状态量，
+     属于「分析 · 负荷与周期」，不再画在训练页上。 */
   function chartTL() {
     const r = load().slice(-14);
-    return { kind: "bars", labels: tlLabels(), values: r.map(x => x.tl), color: "var(--accent)", opacity: .55,
-      lines: [{ values: r.map(x => x.ctl), color: "var(--blue)" }, { values: r.map(x => x.atl), color: "var(--orange)" }] };
+    return { kind: "bars", labels: tlLabels(), values: r.map(x => x.tl), color: "var(--accent)", opacity: .72 };
+  }
+  function chartACWR() {
+    const r = load().slice(-28);
+    const vals = r.map(x => x.ewma).filter(v => v !== null && v !== undefined && isFinite(Number(v)));
+    let min = 0, max = 1.6;
+    if (vals.length) {
+      min = Math.max(0, Math.floor((Math.min.apply(null, vals) - 0.15) * 10) / 10);
+      max = Math.ceil((Math.max.apply(null, vals) + 0.15) * 10) / 10;
+      if (max - min < 0.6) max = min + 0.6;
+    }
+    return { kind: "line", labels: A.DATES.slice(-r.length), min: min, max: max,
+      series: [{ name: "ACWR (EWMA)", values: r.map(x => x.ewma), color: "var(--accent)", width: 2.2, fill: true }],
+      zeroLine: false };
   }
   function chartLoadTrend() {
     const r = load();
@@ -624,7 +647,7 @@
     const SM = A.SUMMARY;
     const TODAY = (function () {
       if (!SM) return { hrv: "64", hrvNote: "基线 60.4 ms · 未显著偏离",
-                        planCount: "1", planText: "力量 · 下肢 VBT · 68 min" };
+                        planCount: "1", planText: "力量 · 68 min" };
       const r = SM.recovery || {};
       const base = r.baseline == null ? null : Math.exp(Number(r.baseline));
       const z = r.z == null ? null : Number(r.z);
@@ -692,14 +715,15 @@
         { label: "恢复 · HRV", value: TODAY.hrv, unit: "ms", delta: TODAY.hrvNote, metricId: "hrv.rmssd", win: "28 日", src: "device", go: "analyze/recovery" },
         { label: "今日计划", value: TODAY.planCount, unit: "课", delta: TODAY.planText, go: "train/session" }
       ], 3),
-      S_cards("今日三个入口", "不做图表堆叠，只给下一步动作", [
-        { icon: "bolt", title: "开始 VBT 采集", sub: "IMU 拉取 / 手动填入 · 来源互斥", value: "进入", route: "lab/vbt" },
-        { icon: "plus", title: "新建跳跃测试", sub: "CMJ / SJ / DJ / RSI 10-5", value: "进入", sheet: "newtest" },
+      S_cards("今日三个入口", "训练、测试、数据各自独立", [
+        { icon: "train", title: "记录今天的训练", sub: "8 类训练 · 多段自由搭配 · 只算 TL 与 ACWR", value: "进入", route: "train" },
+        { icon: "lab", title: "测试模块", sub: "CMJ / SJ / DJ / VBT / 冲刺 / 筛查 · 不计入 TL", value: "进入", route: "lab" },
         { icon: "database", title: "设备与缺测", sub: (state.dbLive
             ? (A.DEVICES.length + " 台在用 · " + (A.SRV || []).filter(d => d.tl === null).length + " 天缺测")
             : "5 台在用 · 2 天缺测"), value: "进入", route: "data/quality" }
       ], 2),
-      S_note("今日页边界", "此页只回答<b>一个问题</b>：今天该练什么。长期趋势进 <b>分析</b>，采集写入进 <b>测试</b>，设备与授权进 <b>数据</b>，团队聚合进 <b>教练工作台</b>。", "info", 1, { label: "查看完整边界表", route: "data/metrics" })
+      S_note("今日页边界", "此页只回答<b>一个问题</b>：今天该练什么。<b>训练</b>负责计划与负荷（TL / ACWR），" +
+        "<b>测试</b>负责 CMJ、VBT 等测量且结果不混入训练负荷；长期趋势进 <b>分析</b>，设备与授权进 <b>数据</b>，团队聚合进 <b>教练工作台</b>。", "info", 1, { label: "查看完整边界表", route: "data/metrics" })
     ], { chips: [dataChip(), '<button class="chip" data-act="sheet" data-sheet="rule" data-id="R-12">规则版本 v1.0</button>'] });
   })();
 
@@ -714,29 +738,37 @@
     const doneN = week.filter(w => w.status === "已完成").length;
     const missingN = (A.SRV || []).filter(d => d.tl === null).length;
     const CM = A.CYCLE_META;
+    const lastLoad = last();
+    const curAcwr = (lastLoad && lastLoad.ewma !== null && lastLoad.ewma !== undefined && isFinite(Number(lastLoad.ewma)))
+      ? fmt(lastLoad.ewma, 2) : "—";
     const overviewMetrics = LIVE ? [
       { label: "本周累计 TL", value: String(Math.round(tl7)), delta: "7 日有效天 " + valid7 + "/7", metricId: "tl.srpe", win: "7 日", src: "device", go: "train/calendar" },
+      { label: "当前 ACWR", value: curAcwr, delta: "急性 / 慢性负荷比 · EWMA", metricId: "acwr.ewma", win: "EWMA", go: "analyze/load", na: curAcwr === "—" },
       { label: "计划完成率", value: week.length ? String(Math.round(doneN / week.length * 100)) : "—", unit: week.length ? "%" : "", delta: week.length ? "本周 " + doneN + "/" + week.length + " 课" : "本周未排课", go: "train/calendar" },
-      { label: "当前周期阶段", value: CM ? CM.phase : "—", delta: CM ? CM.start + " – " + CM.end : "未建周期 · 不推断阶段", go: "train/plan" },
       { label: "缺测天数", value: String(missingN), unit: "天", delta: "28 日窗口内 · 显示「—」", go: "data/quality" }
     ] : [
-      { label: "本周累计 TL", value: "546", delta: "7 日有效天 7/7", metricId: "tl.srpe", win: "7 日", src: "device", go: "train/calendar" },
-      { label: "计划完成率", value: "92", unit: "%", delta: "本周 6/7 课", go: "train/calendar" },
-      { label: "当前周期阶段", value: "Build", delta: "11/03 – 11/23 · 目标 118/日", go: "train/plan" },
-      { label: "缺测天数", value: "2", unit: "天", delta: "28 日窗口内 · 显示「—」", go: "data/quality" }
+      { label: "本周累计 TL", value: "—", delta: "未连接数据源", metricId: "tl.srpe", win: "7 日", na: true },
+      { label: "当前 ACWR", value: "—", delta: "未连接数据源", metricId: "acwr.ewma", win: "EWMA", na: true },
+      { label: "计划完成率", value: "—", delta: "本周未排课", go: "train/calendar", na: true },
+      { label: "缺测天数", value: "—", unit: "天", delta: "28 日窗口内", go: "data/quality", na: true }
     ];
     page("train", "训练", "练了什么、接下来练什么？", "TRAIN / 概览", [
       S_metrics(overviewMetrics),
-      S_chart("计划与完成", "近 14 日日负荷 TL；折线为 CTL / ATL", chartTL(), 2, { drillId: "ctl",
-        legend: [{ name: "日 TL", color: "var(--accent)" }, { name: "CTL 42 日", color: "var(--blue)" }, { name: "ATL 7 日", color: "var(--orange)" }],
-        note: "缺测日为虚线空位并显示「—」，不按 0 补齐。" }),
-      S_cards("周期块", "由规则引擎生成，可解释、可审批", A.PLAN_BLOCKS.map(b => ({ icon: "chart", title: b.phase + " · " + b.range, sub: "目标周 TL " + b.target + (b.targetDay ? " · 约 " + b.targetDay + "/日" : "") + (b.actual === null || b.actual === undefined ? "" : " · 实际 " + b.actual), value: b.status, badge: b.status, badgeTone: b.tone === "active" ? "info" : b.tone === "done" ? "ok" : b.tone === "warn" ? "bad" : "mute", route: "train/plan" })), 1),
-      S_cards("近期训练", "点按进入单次训练详情与 TL 下钻", A.SESSIONS.slice(0, 5).map(s => ({ icon: "today", title: s.name, sub: s.date + " · " + s.sport + " · " + s.dur, value: s.tl ? "TL " + s.tl : "休息", route: "train/session", sid: s._id })), 2),
-      S_note("训练页边界", "训练页承载<b>计划、日历、课库与执行记录</b>；长期趋势计算不在这里，进 <b>分析 · 负荷与周期</b>。", "", 1)
-    ], { chips: [dataChip()], actions: [{ label: "＋ 新建训练", sheet: "newtest" }, { label: "打开课库", route: "train/library" }] });
+      S_chart("日负荷 TL", "近 14 日 · 本模块只呈现 TL 与 ACWR", chartTL(), 2, { drillId: "tl.srpe",
+        legend: [{ name: "日 TL", color: "var(--accent)" }],
+        note: "缺测日为「—」，不按 0 补齐；TL = sRPE × 时长（分钟）。" }),
+      S_chart("ACWR 趋势", "近 28 日 · EWMA 主口径 · 参考区间 0.80–1.30", chartACWR(), 1, { drillId: "acwr.ewma",
+        legend: [{ name: "ACWR (EWMA)", color: "var(--accent)" }],
+        note: "急性 / 慢性负荷比；CTL 与 ATL 是其内部状态量，在「分析 · 负荷与周期」查看。" }),
+      S_cards("周期块", "由规则引擎生成，可解释、可审批", A.PLAN_BLOCKS.map(b => ({ icon: "chart", title: b.phase + " · " + b.range, sub: "目标周 TL " + b.target + (b.targetDay ? " · 约 " + b.targetDay + "/日" : "") + (b.actual === null || b.actual === undefined ? "" : " · 实际 " + b.actual), value: b.status, badge: b.status, badgeTone: b.tone === "active" ? "info" : b.tone === "done" ? "ok" : b.tone === "warn" ? "bad" : "mute", route: "train/plan" })), 2),
+      S_cards("近期训练", "点按进入单次训练详情", A.SESSIONS.slice(0, 5).map(s => ({ icon: "today", title: s.name, sub: s.date + " · " + s.sport + " · " + s.dur, value: s.tl ? "TL " + s.tl : "休息", route: "train/session", sid: s._id })), 1),
+      S_note("模块边界", "训练模块只计算 <b>TL</b> 与 <b>ACWR</b>，包含计划、日历、单次记录、周期与训练方案库；" +
+        "<b>CMJ / SJ / DJ、VBT、冲刺、筛查等测试项目一律在「测试」模块</b>，不写进训练负荷。", "info", 3)
+    ], { chips: [dataChip()], actions: [{ label: "＋ 记录训练", act: "arc-record", primary: true }, { label: "训练方案库", route: "train/library" }] });
 
     page("train/calendar", "训练日历", "这一周 / 月计划与完成的差在哪？", "TRAIN / 二级", [
-      S_chart("近 14 日计划 vs 完成", "柱=实际日 TL；折线=CTL / ATL", chartTL(), 2, { drillId: "tl.srpe", legend: [{ name: "实际 TL", color: "var(--accent)" }, { name: "CTL", color: "var(--blue)" }, { name: "ATL", color: "var(--orange)" }] }),
+      S_chart("近 14 日日负荷 TL", "柱=当日 TL；缺测日为「—」", chartTL(), 2, { drillId: "tl.srpe", legend: [{ name: "日 TL", color: "var(--accent)" }] }),
+      S_chart("ACWR 趋势", "近 28 日 · 参考区间 0.80–1.30", chartACWR(), 1, { drillId: "acwr.ewma", legend: [{ name: "ACWR (EWMA)", color: "var(--accent)" }] }),
       S_table("周期阶段标签", "每阶段设定目标周 TL（AU）", ["阶段", "区间", "目标周 TL", "状态"], A.PLAN_BLOCKS.map(b => [esc(b.phase), esc(b.range), esc(b.target), esc(b.status)]), 1),
       S_cards("训练记录", "按日期倒序 · 点按看单次详情", A.SESSIONS.map(s => ({ icon: "train", title: s.name, sub: s.date + " · " + s.sport + " · " + s.dur + " · " + s.method, value: s.tl || "—", route: "train/session", sid: s._id })), 2),
       S_note("日历规则", "计划与完成并列展示，<b>差值不估算</b>；缺测日为空位。按完成度排序属于教练工作台能力，不在个人日历内。", "", 1)
@@ -751,44 +783,38 @@
       if (!state.dbLive || !S0) {
         return [
           S_metrics([
-            { label: "时长", value: "68", unit: "min", delta: "力量 · 下肢 VBT", go: "train/calendar" },
-            { label: "TL（sRPE）", value: "96", delta: "RPE 7 × 时长 · 口径已固定", metricId: "tl.srpe", win: "单次", src: "device" },
-            { label: "sRPE", value: "7", unit: "/10", delta: "手动录入 · source=manual", go: "data/import" },
-            { label: "TSS", value: "—", delta: "不可计算 · 无功率数据", metricId: "tl.tss", win: "单次", src: "—", na: true }
+            { label: "时长", value: "68", unit: "min", delta: "力量 · 一次训练", go: "train/calendar" },
+            { label: "TL（本次）", value: "96", delta: "sRPE × 时长 · 本模块只呈现 TL 与 ACWR", metricId: "tl.srpe", win: "单次", src: "device" },
+            { label: "sRPE", value: "7", unit: "/10", delta: "手动录入 · source=manual", go: "data/import" }
           ]),
-          S_chart("样本流：心率 / 速度", "本课原始样本流", { kind: "line", labels: ["0", "10", "20", "30", "40", "50", "60", "68"], min: 60, max: 180,
+          S_chart("样本流：心率", "本课原始样本流", { kind: "line", labels: ["0", "10", "20", "30", "40", "50", "60", "68"], min: 60, max: 180,
             series: [{ name: "心率 bpm", values: [92, 118, 142, 136, 152, 148, 138, 104], color: "var(--red)", width: 2.2, fill: true }] }, 2,
             { drillId: "tl.srpe", legend: [{ name: "心率", color: "var(--red)" }], note: "样本级下钻在指标口径 Sheet 内提供，不在此页堆叠表格。" }),
           S_kv("本课计算口径", "每个值都能回答四问", [
-            ["TL 方法", "<b>sRPE v1.0</b> · 一次选定并固定，不与 TRIMP / TSS 混用"],
+            ["TL 方法", "<b>sRPE v1.0</b> · TL = sRPE × 时长（分钟）"],
             ["公式", "<span class=\"formula\">TL = sRPE(0–10) × 时长(min) = 7 × 68 ≈ 476 → 归一为 96</span>"],
             ["输入", "RPE=7（manual）· 时长 68 min（device）· HR 时序（device）"],
-            ["TSS", "<b>不可计算</b> · 本课无功率数据，不回退 TRIMP 冒充"],
             ["证据", "E6 (Foster 2001) · E7 (Allen & Coggan)"]
           ], 1),
-          S_cards("关联", "页面级跳转，不使用第三层嵌套", [
-            { icon: "analyze", title: "查看长期负荷趋势", sub: "analyze/load · CTL/ATL/TSB", route: "analyze/load" },
-            { icon: "lab", title: "查看本课 VBT 采集", sub: "lab/vbt · IMU 拉取记录", route: "lab/vbt" },
-            { icon: "data", title: "查看原始样本与质量标记", sub: "data/quality · source / quality_flag", route: "data/quality" }
-          ], 3)
+          S_cards("关联", "训练模块内跳转", [
+            { icon: "train", title: "TL 与 ACWR 趋势", sub: "训练 · 概览与日历", route: "train" },
+            { icon: "data", title: "原始样本与质量标记", sub: "data/quality · source / quality_flag", route: "data/quality" }
+          ], 2)
         ];
       }
 
       // ── 真实库：一切都来自这一行 activities，没有的字段就写「没有」 ──
       const SRC = { device: "设备", import: "导入", manual: "手动", api: "厂商 API" };
-      const canTss = S0.method === "tss" || S0.method === "power";
       return [
         S_metrics([
           { label: "时长", value: S0.durMin === null ? "—" : String(S0.durMin), unit: S0.durMin === null ? "" : "min",
             delta: S0.date + " · " + S0.sport, go: "train/calendar", na: S0.durMin === null },
           { label: "TL（本次）", value: S0.tl === null ? "—" : fmt(S0.tl, 0),
-            delta: S0.tl === null ? "该节未产生负荷值" : "方法 " + (S0.method || "—") + " · 与 CTL/ATL 同源",
+            delta: S0.tl === null ? "该节未产生负荷值" : "方法 " + (S0.method || "—") + " · 计入当日 TL",
             metricId: "tl.srpe", win: "单次", src: S0.src || "manual", na: S0.tl === null },
           { label: "sRPE", value: S0.rpe ? String(S0.rpe) : "—", unit: S0.rpe ? "/10" : "",
             delta: S0.rpe ? "主观强度 · source=" + (S0.src || "manual") : "未录入 RPE",
             go: "data/import", na: !S0.rpe },
-          { label: "TSS", value: "—", delta: canTss ? "方法标为功率但样本缺失" : "不可计算 · 无功率数据",
-            metricId: "tl.tss", win: "单次", src: "—", na: true }
         ]),
         S_chart("样本流：心率 / 速度", "本课原始样本流", null, 2,
           { note: "raw_samples 里这一节没有写入任何通道样本，所以不画曲线。" }),
@@ -802,17 +828,15 @@
           ["source", esc(S0.src || "—"), "device / import / manual / api"]
         ], 1),
         S_kv("本课计算口径", "每个值都能回答四问", [
-          ["TL 方法", "<b>sRPE</b> · 一次选定并固定，不与 TRIMP / TSS 混用"],
+          ["TL 方法", "<b>sRPE</b> · TL = sRPE × 时长（分钟）"],
           ["公式", "<span class=\"formula\">TL = sRPE(0–10) × 时长(min)</span>" + (S0.rpe && S0.durMin ? " = " + S0.rpe + " × " + S0.durMin + " = " + (S0.rpe * S0.durMin) : "")],
           ["输入", "RPE=" + (S0.rpe || "—") + "（" + (SRC[S0.src] || "—") + "）· 时长 " + (S0.durMin === null ? "—" : S0.durMin + " min")],
-          ["TSS", "<b>不可计算</b> · 本课无功率数据，不回退 TRIMP 冒充"],
           ["证据", "E6 (Foster 2001) · E7 (Allen & Coggan)"]
         ], 1),
-        S_cards("关联", "页面级跳转，不使用第三层嵌套", [
-          { icon: "analyze", title: "查看长期负荷趋势", sub: "analyze/load · CTL/ATL/TSB", route: "analyze/load" },
-          { icon: "lab", title: "查看本课 VBT 采集", sub: "lab/vbt · IMU 拉取记录", route: "lab/vbt" },
-          { icon: "data", title: "查看原始样本与质量标记", sub: "data/quality · source / quality_flag", route: "data/quality" }
-        ], 3),
+        S_cards("关联", "训练模块内跳转", [
+          { icon: "train", title: "TL 与 ACWR 趋势", sub: "训练 · 概览与日历", route: "train" },
+          { icon: "data", title: "原始样本与质量标记", sub: "data/quality · source / quality_flag", route: "data/quality" }
+        ], 2),
         (function () {
         const raw = (S0.rpe && S0.durMin) ? S0.rpe * S0.durMin : null;
         const same = raw !== null && S0.tl !== null && Math.abs(raw - S0.tl) < 0.5;
@@ -853,7 +877,7 @@
           S_table("周期块时间轴", "Base / Build / Peak / Taper / Deload", ["阶段", "区间", "目标日 TL", "规则版本", "状态"], A.PLAN_BLOCKS.map(b => [esc(b.phase), esc(b.range), esc(b.target), "rule-engine v1.0", esc(b.status)]), 3,
             { note: "周期块为可解释规则输出，不输出黑盒评分；回滚与灰度在教练工作台 · 规则与口径版本。" }),
           S_flow("从建议到落地", "应用建议需二次确认", [
-            { t: "规则引擎输出建议", d: "输入 CTL 斜率 / ACWR / TSB / TM / TS / 有效天数，命中 R-01。" },
+            { t: "规则引擎输出建议", d: "输入 日 TL / ACWR / 有效天数，命中 R-01。" },
             { t: "查看依据", d: "O7 规则解释 Sheet 展示输入值、阈值、版本号与可调整参数。" },
             { t: "预填目标日 TL", d: "在本页生成待确认的周期块，不直接覆盖现有计划。" },
             { t: "审批后生效", d: "head_coach 角色审批；写操作记入审计日志。" }
@@ -917,61 +941,61 @@
         { label: "查看规则版本", route: "admin/rules" }));
 
       return out;
-    })(), { chips: [dataChip()], actions: [{ label: "查看规则依据", sheet: "rule", id: "R-01" }, { label: "打开课库", route: "train/library" }] });
+    })(), { chips: [dataChip()], actions: [{ label: "查看规则依据", sheet: "rule", id: "R-01" }, { label: "训练方案库", route: "train/library" }] });
 
-    page("train/library", "课库与模板", "有哪些可复用的结构化课？", "TRAIN / 二级", (function () {
-      const LIVE = state.dbLive;
+    page("train/library", "训练方案库", "选哪类训练、怎么搭配？", "TRAIN / 训练方案", (function () {
+      const T = A.TRAIN_TYPES || [], P = A.TRAIN_PRESETS || [];
+      const labelOf = function (id) { const t = T.filter(function (x) { return x.id === id; })[0]; return t ? t.label : id; };
+      const presetRows = P.map(function (p) {
+        return [esc(p.name),
+          p.seg.map(function (s) { return labelOf(s[0]) + " " + s[1] + "′"; }).join(" + "),
+          String(p.seg.length),
+          p.seg.reduce(function (a, s) { return a + s[1]; }, 0) + " min",
+          esc(p.note)];
+      });
       const lib = A.LIBRARY || [];
-      const PURPOSE_ICON = { "力量": "lab", "爆发力": "bolt", "速度": "bolt", "体能": "train", "恢复": "heart", "测试": "bolt" };
-
-      if (!LIVE) {
-        return [
-          S_cards("结构化课", "分类：跑步 / 骑行 / 力量 / 测试", [
-            { icon: "train", title: "节奏跑 20' + 6×400m", sub: "跑步 · 72 min · 目标 Z4", badge: "可下发", badgeTone: "info" },
-            { icon: "train", title: "阈值间歇 4×8min", sub: "骑行 · 81 min · 目标 95% FTP", badge: "可下发", badgeTone: "info" },
-            { icon: "lab", title: "下肢 VBT 5×5 @ 80kg", sub: "力量 · 68 min · VL 阈值 20%", badge: "可下发", badgeTone: "info" },
-            { icon: "bolt", title: "跳跃测试组合 CMJ/SJ/DJ", sub: "测试 · 35 min · 需登记 fps", badge: "模板", badgeTone: "mute" },
-            { icon: "heart", title: "恢复日 Z1 + 活动度", sub: "跑步 · 40 min · RPE ≤ 3", badge: "模板", badgeTone: "mute" }
-          ], 2),
-          S_protocols("从课库发起测试", "点按协议进入对应采集页", 1),
-          S_note("边界", "课库只负责<b>复用与下发</b>；测试的实际采集在 <b>lab/*</b>，长期对比在 <b>analyze/*</b>。", "", 3)
-        ];
+      const PURPOSE_ICON = { "力量": "train", "爆发力": "bolt", "速度": "bolt", "体能": "train", "恢复": "heart" };
+      const base = [
+        S_cards("可选训练类型", "每一段都能单独选类型、时长与 RPE",
+          T.map(function (t) { return { icon: "train", title: t.label, sub: t.hint }; }), 3),
+        S_table("预设搭配方案", "只是「段的结构」，不是已发生的训练；载入后可逐段改",
+          ["方案", "结构", "段数", "建议总时长", "侧重"], presetRows, 3,
+          { note: "建议时长只作起点；实际 RPE 与时长由你填写，保存后才产生 TL。方案本身不含任何成绩或负荷数值。" }),
+        S_note("自行搭配", "在「＋ 记录训练」里可以 <b>增删任意段</b>、逐段选类型与 RPE，" +
+          "也可以把常用组合<b>保存为我的方案</b>下次直接载入。<b>TL = Σ(每段 RPE × 每段时长)</b>，ACWR 由服务端按日负荷重算。",
+          "info", 3, { label: "开始搭配训练", act: "arc-record" })
+      ];
+      if (!state.dbLive || !lib.length) {
+        return base.concat([
+          S_note("教练下发的课", state.dbLive
+            ? "库里的 <b>session_templates</b> 还没有模板；这里不会预置示例课。"
+            : "连接数据源后，这里会列出教练真实写下的结构化课。", "", 3),
+          S_note("模块边界", "训练方案库<b>只包含训练</b>。CMJ / SJ / DJ、VBT、冲刺与筛查等测试项目在 <b>测试</b>模块，" +
+            "不会写进训练负荷，也不出现在本页。", "", 3)
+        ]);
       }
-
-      if (!lib.length) {
-        return [
-          S_note("课库是空的", "库里的 <b>session_templates</b> 没有任何模板。课库不会预置示例课——" +
-            "这里显示的每一节课都必须是教练真实写下、能下发的。", "info", 3),
-          S_protocols("从课库发起测试", "点按协议进入对应采集页", 1),
-          S_note("边界", "课库只负责<b>复用与下发</b>；测试的实际采集在 <b>lab/*</b>，长期对比在 <b>analyze/*</b>。", "", 3)
-        ];
-      }
-
       const rows = [];
-      lib.forEach(t => {
+      lib.forEach(function (t) {
         if (!t.items.length) { rows.push(["—", t.title, "—", "—", "—", '<span class="mini">无条目</span>']); return; }
-        t.items.forEach(i => rows.push([
+        t.items.forEach(function (i) { rows.push([
           esc(i.seq), esc(i.exercise),
           i.sets && i.reps ? i.sets + "×" + i.reps : (i.sets || "—"),
           i.load !== null ? i.load + " kg" : (i.pct !== null ? i.pct + " %1RM" : (i.dist !== null ? i.dist + " m" : "—")),
           i.rest !== null ? i.rest + " s" : "—",
           i.velMin !== null ? "≥ " + i.velMin.toFixed(2) + " m/s" : '<span class="mini">未设速度阈值</span>'
-        ]));
+        ]); });
       });
-
-      return [
-        S_cards("结构化课", "共 " + lib.length + " 个模板 · 来自 session_templates / session_items", lib.map(t => ({
-          icon: PURPOSE_ICON[t.purpose] || "train",
-          title: t.title,
+      return base.concat([
+        S_cards("教练下发的结构化课", "共 " + lib.length + " 个 · 来自 session_templates / session_items", lib.map(function (t) { return {
+          icon: PURPOSE_ICON[t.purpose] || "train", title: t.title,
           sub: [t.purpose, t.dur, t.rpe ? "RPE " + t.rpe : null].filter(Boolean).join(" · ") + " · " + t.summary,
           badge: t.count + " 条目", badgeTone: t.count ? "info" : "mute",
           btn: { label: "排到今天", act: "assign", id: t.id }
-        })), 2),
+        }; }), 2),
         S_table("条目明细", "绝对重量与 %1RM 互斥（数据库 CHECK 强制）",
-          ["#", "动作", "组×次", "负荷", "组间", "速度阈值"], rows, 2,
-          { note: "同一动作同时填 kg 和 %1RM 会被数据库拒绝——两个口径并存等于两个事实源。" }),
-        S_note("边界", "课库只负责<b>复用与下发</b>；排课写到 session_assignments，实际采集在 <b>lab/*</b>，长期对比在 <b>analyze/*</b>。", "", 3)
-      ];
+          ["#", "动作", "组×次", "负荷", "组间", "速度阈值"], rows, 2),
+        S_note("模块边界", "本页<b>只包含训练</b>；排课写到 session_assignments。测试项目在 <b>测试</b>模块，长期趋势在 <b>分析</b>模块。", "", 2)
+      ]);
     })(), { chips: [dataChip()] });
 
     page("train/goals", "比赛与目标", "目标赛事与个人最好成绩如何变化？", "TRAIN / 二级", (function () {
@@ -1461,7 +1485,7 @@
           { label: "测试能力域", value: "30+", detail: "跳跃 / VBT / 冲刺 / 变向 / 活动度 / 问卷" },
           { label: "录入通道", value: "3", detail: "视频帧标记 / IMU / 手动填入" },
           { label: "来源规则", value: "互斥", detail: "import 与 manual 不合并计算" }
-        ], actions: [{ label: "＋ 新建测试", sheet: "newtest", primary: true }] }),
+        ], actions: [{ label: "＋ 记录测试", act: "arc-test-record", primary: true }] }),
       S_metrics([
         { label: "今日测试", value: "3", unit: "次", delta: "CMJ / SJ / DJ", go: "lab/history" },
         { label: "IMU 采样率", value: "200", unit: "Hz", delta: "imu-001 · 已登记", go: "data/devices" },
@@ -1515,7 +1539,7 @@
         j.tc === null ? "—" : fmt(jumpRSI(j.tf, j.tc), 2), esc(j.method), j.fps === null ? "—" : esc(j.fps), esc(j.cond)
       ]), 3),
       S_note("用例 1 可核验", "t_f = 0.500 s → h = 9.81 × 0.25 / 8 = <b>0.30656 m ≈ 30.7 cm</b>。「手动填入」面板 会按此公式实时计算。", "info", 3, { label: "打开手动填入", sheet: "manual" })
-    ], { chips: [dataChip()], actions: [{ label: "＋ 新建测试", sheet: "newtest", primary: true }] });
+    ], { chips: [dataChip()], actions: [{ label: "＋ 记录测试", act: "arc-test-record", primary: true }] });
 
     page("lab/sprint", "冲刺与变向", "直线 / 变向 / 水平力学表现如何？", "LAB / 冲刺", [
       S_metrics([{ label: "10 m 分段", value: "1.68", unit: "s", delta: "直线冲刺 · 分段计时" },
@@ -2244,7 +2268,7 @@
         : state.dbError
         ? '<span class="pill err" title="' + esc(state.dbReason) + '">数据未加载</span>'
         : state.dbLive
-        ? '<button class="pill accent" data-act="arc-record">＋ 记录</button><span class="pill ' + (state.dbStale || state.dbTruncated ? "warnp" : "live") + '" title="' + esc(state.dbReason || "数据来自你的训练记录，行级权限已生效") + '">' + (state.dbStale ? "数据可能已过期" : state.dbTruncated ? "部分记录超出窗口" : "已同步") + '</span>'
+        ? '<button class="pill accent" data-act="arc-record">＋ 记录训练</button><span class="pill ' + (state.dbStale || state.dbTruncated ? "warnp" : "live") + '" title="' + esc(state.dbReason || "数据来自你的训练记录，行级权限已生效") + '">' + (state.dbStale ? "数据可能已过期" : state.dbTruncated ? "部分记录超出窗口" : "已同步") + '</span>'
         : '<span class="pill demo" title="尚未连接数据源">未连接</span>') +
       '<button class="pill accent" data-act="workspace">' + icon(isAdmin ? "arrow" : "shield", 13) + (isAdmin ? " 返回" : " 工作台") + '</button>' +
       '<button class="pill kbd-hint" data-act="palette">' + icon("search", 13) + '<span class="kbd">⌘K</span></button>';
@@ -2301,8 +2325,14 @@
       return;
     }
     const chips = (pg.chips || []).join("");
-    const actions = (pg.actions || []).map(a => '<button class="btn ' + (a.primary ? "primary" : "") + '" data-act="' + (a.sheet ? "sheet" : "nav") + '" ' +
-      (a.sheet ? 'data-sheet="' + a.sheet + '"' + (a.id ? ' data-id="' + esc(a.id) + '"' : "") : 'data-route="' + a.route + '"') + '>' + esc(a.label) + '</button>').join("");
+    const actions = (pg.actions || []).map(function (a) {
+      const attrs = a.act
+        ? 'data-act="' + esc(a.act) + '"' + (a.id ? ' data-id="' + esc(a.id) + '"' : "")
+        : (a.sheet
+          ? 'data-act="sheet" data-sheet="' + esc(a.sheet) + '"' + (a.id ? ' data-id="' + esc(a.id) + '"' : "")
+          : 'data-act="nav" data-route="' + esc(a.route) + '"');
+      return '<button class="btn ' + (a.primary ? "primary" : "") + '" ' + attrs + '>' + esc(a.label) + '</button>';
+    }).join("");
     // docs/04：按界面注入实时控制条 / 对标评分 / 数据融合（不改变既有路由与层级）
     // 这三块全是模拟占位（1 Hz 假流、厂商评分占位、映射示意）。真库模式下必须关掉：
     // 「实时 · 1 Hz / 最新更新 18:29:40 / device.sample」配着真实数字出现，会被读成真有数据在推。
@@ -2452,8 +2482,8 @@
     }
     if (t === "manual") { return manualSheet(); }
     if (t === "newtest") {
-      return { title: "新建测试", subtitle: "O5 · 选择协议后进入对应采集页", small: true,
-        body: (id ? '<div class="note info">已选协议：<b>' + esc(id) + '</b>。点按下方按钮进入采集页。</div>' : '<div class="note">选择一个协议开始测量；所有录入都写入 source 与 quality_flag。</div>') +
+      return { title: "选择测试项目", subtitle: "测试模块 · 选择协议后进入对应采集页", small: true,
+        body: (id ? '<div class="note info">已选协议：<b>' + esc(id) + '</b>。点按下方按钮进入采集页。</div>' : '<div class="note">选择一个协议开始测量；测试记录写入 source 与 quality_flag，<b>不计入 TL 与 ACWR</b>。</div>') +
           '<div class="sheet-section-title">协议</div><div class="protocol-grid">' +
           ["CMJ", "SJ", "DJ 跳深", "RSI 10-5", "VBT 杠铃速度", "5-0-5 变向", "踝背屈 ROM", "Wellness 问卷"].map(x => '<button class="protocol" data-act="sheet" data-sheet="newtest" data-id="' + esc(x) + '">' + esc(x) + '</button>').join("") + '</div>',
         footer: foot(closeBtn + '<button class="btn primary" data-act="nav" data-route="' + (id && id.indexOf("VBT") >= 0 ? "lab/vbt" : id && id.indexOf("ROM") >= 0 ? "lab/screen" : id && id.indexOf("问卷") >= 0 ? "lab/screen" : id && id.indexOf("变向") >= 0 ? "lab/sprint" : "lab/jump") + '">进入采集</button>') };
@@ -2726,7 +2756,8 @@
       openSheet(t, id || el.dataset.date || ""); return;
     }
     if (a === "close") { state.sheet = null; state.palette = false; renderOverlay(); return; }
-    if (a === "arc-record") { if (window.ARC_UI) window.ARC_UI.openRecord(); return; }
+    if (a === "arc-record") { if (window.ARC_UI) window.ARC_UI.openRecord("train"); return; }
+    if (a === "arc-test-record") { if (window.ARC_UI) window.ARC_UI.openRecord("test"); return; }
     if (a === "download-csv") { downloadCsv(el.dataset.kind); return; }
     if (a === "assign") { assignTemplate(el.dataset.id); return; }
     if (a === "db-retry") {

@@ -13,6 +13,9 @@
     view: null,        // gate | onboarding | panel | record
     tab: "signin",     // signin | signup
     rec: "training",   // training | checkin | jump | team
+    scope: "train",    // train | test —— 训练与测试各自独立的记录入口
+    segments: [{ type: "strength", dur: 45, rpe: 7 }],  // 当前自行搭配的训练段
+    planName: "",
     err: "",
     msg: "",
     lastEmail: "",
@@ -33,6 +36,75 @@
     var d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
     return d.toISOString().slice(0, 10);
   }
+
+  /* ── 训练搭配方案（只作用于训练模块，不含任何测试项目） ────────────── */
+  var LS_PLANS = "arc_training_plans_v1";
+  function trainTypes() { return (window.ARC && window.ARC.TRAIN_TYPES) || []; }
+  function trainPresets() { return (window.ARC && window.ARC.TRAIN_PRESETS) || []; }
+  function typeLabel(id) {
+    var t = trainTypes().filter(function (x) { return x.id === id; })[0];
+    return t ? t.label : id;
+  }
+  function typeSelectHtml(i, sel) {
+    return '<select id="sType' + i + '" data-seg="type" data-i="' + i + '">' +
+      trainTypes().map(function (t) {
+        return '<option value="' + esc(t.id) + '"' + (t.id === sel ? " selected" : "") + '>' + esc(t.label) + '</option>';
+      }).join("") + '</select>';
+  }
+  function myPlans() {
+    try { return JSON.parse(localStorage.getItem(LS_PLANS) || "[]") || []; } catch (e) { return []; }
+  }
+  function writeMyPlans(list) {
+    try { localStorage.setItem(LS_PLANS, JSON.stringify(list)); return true; } catch (e) { return false; }
+  }
+  function collectSegments() {
+    if (U.rec !== "training" || !el("sType0")) return U.segments.slice();
+    var out = [], i = 0;
+    while (el("sType" + i)) {
+      out.push({
+        type: el("sType" + i).value || "other",
+        dur: Number(val("sDur" + i) || 0),
+        rpe: Number(val("sRpe" + i) || 0)
+      });
+      i++;
+    }
+    if (out.length) U.segments = out;
+    return U.segments.slice();
+  }
+  function segSummary(segs) {
+    var dur = 0, tl = 0, parts = [];
+    segs.forEach(function (s) {
+      var d = Number(s.dur) || 0, r = Number(s.rpe) || 0;
+      dur += d; tl += r * d; parts.push(r + "×" + d);
+    });
+    return { dur: dur, tl: tl, parts: parts };
+  }
+  function planOptionsHtml() {
+    var opts = ['<option value="">选择一套方案载入…</option>', '<optgroup label="预设结构方案">'];
+    trainPresets().forEach(function (p) {
+      opts.push('<option value="preset:' + esc(p.id) + '">' + esc(p.name) + " · " + esc(p.note) + '</option>');
+    });
+    opts.push('</optgroup>');
+    var mine = myPlans();
+    if (mine.length) {
+      opts.push('<optgroup label="我的方案">');
+      mine.forEach(function (p) { opts.push('<option value="mine:' + esc(p.name) + '">' + esc(p.name) + "</option>"); });
+      opts.push('</optgroup>');
+    }
+    return opts.join("");
+  }
+  function segRowsHtml() {
+    return U.segments.map(function (s, i) {
+      return '<div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">' +
+        '<span style="width:18px;flex:0 0 18px;color:var(--text-3);font-size:12px">' + (i + 1) + '</span>' +
+        typeSelectHtml(i, s.type) +
+        '<input id="sDur' + i + '" type="number" min="1" max="600" value="' + esc(s.dur) + '" title="分钟" style="width:66px;flex:0 0 66px">' +
+        '<input id="sRpe' + i + '" type="number" min="0" max="10" step="0.5" value="' + esc(s.rpe) + '" title="RPE 0–10" style="width:66px;flex:0 0 66px">' +
+        '<button data-u="seg-del" data-i="' + i + '" title="删除这一段" style="flex:0 0 28px;border:1px solid var(--separator);background:transparent;border-radius:8px">✕</button>' +
+        '</div>';
+    }).join("");
+  }
+
   function toast(text, tone) {
     var host = el("arcToast");
     if (!host) {
@@ -198,12 +270,21 @@
 
   function recordHtml() {
     var s = DB.state;
-    var tabs = [["training", "训练"], ["checkin", "每日自评"], ["jump", "跳跃测试"]];
-    if (s.role === "org_admin" || s.role === "team_admin" || s.role === "coach" || s.role === "clinician") {
+    var isTest = U.scope === "test";
+    // 训练与测试各有独立入口，同一个浮层里不再把 CMJ 和训练段摆在一起。
+    var tabs = isTest ? [["jump", "跳跃测试"]] : [["training", "训练"], ["checkin", "每日自评"]];
+    if (!isTest && (s.role === "org_admin" || s.role === "team_admin" || s.role === "coach" || s.role === "clinician")) {
       tabs.push(["team", "团队"]);
     }
+    var note = isTest
+      ? "测试记录写入测试模块，<b>不参与 TL 与 ACWR</b>。"
+      : "训练记录只产生 <b>TL</b>；<b>ACWR</b> 由服务端按日负荷重算。";
+    var swap = isTest
+      ? '<button data-u="scope" data-v="train" style="flex:0 0 auto;color:var(--accent);text-decoration:underline">去记录训练</button>'
+      : '<button data-u="scope" data-v="test" style="flex:0 0 auto;color:var(--accent);text-decoration:underline">去记录测试</button>';
     return shell(
-      '<div class="arcui-head"><b>记录</b><button class="arcui-x" data-u="close">✕</button></div>' +
+      '<div class="arcui-head"><b>' + (isTest ? "记录测试" : "记录训练") + '</b><button class="arcui-x" data-u="close">✕</button></div>' +
+      '<div class="arcui-hint" style="display:flex;gap:8px;align-items:center;justify-content:space-between"><span>' + note + '</span>' + swap + '</div>' +
       '<div class="arcui-tabs small">' + tabs.map(function (t) {
         return '<button class="' + (U.rec === t[0] ? "on" : "") + '" data-u="rectab" data-v="' + t[0] + '">' + t[1] + '</button>';
       }).join("") + '</div>' +
@@ -225,20 +306,24 @@
     }
     if (U.rec === "training") {
       return '<label class="arcui-field"><span>时间</span><input id="tWhen" type="datetime-local" value="' + todayLocal() + '"></label>' +
+        '<div class="arcui-sub2">训练段 · 类型 / 分钟 / RPE（可增删，顺序即执行顺序）</div>' +
+        '<div id="segList">' + segRowsHtml() + '</div>' +
+        '<div class="arcui-actions"><button data-u="seg-add">＋ 添加一段</button><button data-u="seg-clear">清空</button></div>' +
+        '<div class="arcui-sub2">搭配方案</div>' +
         '<div class="arcui-row">' +
-        '<label class="arcui-field"><span>项目</span><select id="tSport">' +
-        ["力量", "跑步", "骑行", "游泳", "球类", "测试", "其他"].map(function (x) { return '<option>' + x + '</option>'; }).join("") +
-        '</select></label>' +
-        '<label class="arcui-field"><span>时长（分钟）</span><input id="tDur" type="number" min="1" max="600" value="60" inputmode="numeric"></label>' +
+        '<label class="arcui-field"><span>载入方案</span><select id="planSel">' + planOptionsHtml() + '</select></label>' +
+        '<label class="arcui-field"><span>方案名称</span><input id="planName" maxlength="24" placeholder="例如：周三力量课" value="' + esc(U.planName || "") + '"></label>' +
         '</div>' +
+        '<div class="arcui-actions"><button data-u="seg-load">载入</button>' +
+        '<button data-u="seg-save">保存为我的方案</button>' +
+        '<button data-u="seg-delete">删除我的方案</button></div>' +
         '<div class="arcui-row">' +
-        '<label class="arcui-field"><span>主观强度 RPE（0–10）</span><input id="tRpe" type="number" min="0" max="10" step="0.5" value="6" inputmode="decimal"></label>' +
         '<label class="arcui-field"><span>距离（km，可选）</span><input id="tDist" type="number" min="0" step="0.01" placeholder="—" inputmode="decimal"></label>' +
         '</div>' +
         '<div class="arcui-calc" id="tPreview"></div>' +
-        '<div class="arcui-hint">TL = sRPE × 时长。保存后服务端会自动重算 CTL / ATL / TSB / ACWR / TM / TS，不需手动刷新。</div>' +
+        '<div class="arcui-hint">每段 TL = 该段 RPE × 该段分钟；本次 TL = 各段之和。训练模块只输出 <b>TL</b> 与 <b>ACWR</b>。</div>' +
         '<button class="arcui-primary" data-u="save-training" ' + (U.busy ? "disabled" : "") + '>保存训练</button>' +
-        '<div class="arcui-note">无功率数据时不会用 TSS 冒充；休息日不记录，也不补 0。</div>';
+        '<div class="arcui-note">方案只是结构模板，不代表已发生的训练；保存后写入一条真实记录，分段明细存在该记录的 raw 字段里。测试项目请到「记录测试」。</div>';
     }
     if (U.rec === "checkin") {
       return '<label class="arcui-field"><span>日期</span><input id="cDate" type="date" value="' + ymdToday() + '"></label>' +
@@ -339,16 +424,23 @@
       handle(u, t);
     });
     document.addEventListener("input", function (e) {
-      if (e.target.id === "tDur" || e.target.id === "tRpe") previewTraining();
-      if (e.target.id === "jFly" || e.target.id === "jCon") previewJump();
+      var id = e.target.id || "";
+      if (/^sDur\d+$/.test(id) || /^sRpe\d+$/.test(id)) previewTraining();
+      if (id === "jFly" || id === "jCon") previewJump();
+    });
+    document.addEventListener("change", function (e) {
+      if (e.target.dataset && e.target.dataset.seg === "type") collectSegments();
+      var id = e.target.id || "";
+      if (/^sDur\d+$/.test(id) || /^sRpe\d+$/.test(id)) previewTraining();
     });
   }
 
   function previewTraining() {
     var box = el("tPreview"); if (!box) return;
-    var dur = Number(val("tDur") || 0), rpe = Number(val("tRpe") || 0);
-    if (!dur || !isFinite(rpe)) { box.textContent = "TL 预览：—"; return; }
-    box.textContent = "TL = " + rpe + " × " + dur + " = " + Math.round(rpe * dur) + " AU（保存后由服务端重算 CTL/ATL/ACWR）";
+    var segs = collectSegments(), m = segSummary(segs);
+    if (!segs.length || m.dur <= 0) { box.textContent = "TL 预览：—（先添加至少一段训练）"; return; }
+    box.textContent = segs.length + " 段 · 共 " + m.dur + " min · TL = " + m.parts.join(" + ") +
+      " = " + Math.round(m.tl) + " AU；保存后由服务端重算 ACWR。";
   }
   function previewJump() {
     var box = el("jPreview"); if (!box) return;
@@ -489,29 +581,99 @@
       if (u === "clear-conn") { DB.clearConfig(); U.view = null; render(); toast("已清除"); return; }
       if (u === "rectab") { U.rec = t.getAttribute("data-v"); U.err = ""; U.msg = ""; render(); return; }
 
+      if (u === "scope") {
+        collectSegments();
+        U.scope = t.getAttribute("data-v") === "test" ? "test" : "train";
+        U.rec = U.scope === "test" ? "jump" : "training";
+        U.err = ""; U.msg = ""; render();
+        setTimeout(function () { U.scope === "test" ? previewJump() : previewTraining(); }, 0);
+        return;
+      }
+      if (u === "seg-add") {
+        var sa = collectSegments();
+        if (sa.length >= 8) throw new Error("一次训练最多 8 段");
+        sa.push({ type: "recovery", dur: 10, rpe: 3 });
+        U.segments = sa; render(); setTimeout(previewTraining, 0); return;
+      }
+      if (u === "seg-del") {
+        var sb = collectSegments(), si = Number(t.getAttribute("data-i"));
+        if (sb.length <= 1) throw new Error("至少保留一段训练");
+        sb.splice(si, 1); U.segments = sb; render(); setTimeout(previewTraining, 0); return;
+      }
+      if (u === "seg-clear") {
+        U.segments = [{ type: "strength", dur: 45, rpe: 7 }];
+        U.planName = ""; render(); setTimeout(previewTraining, 0); return;
+      }
+      if (u === "seg-load") {
+        var pv = val("planSel"), loaded = false;
+        if (!pv) throw new Error("先选择一套方案");
+        if (pv.indexOf("preset:") === 0) {
+          var pp = trainPresets().filter(function (x) { return x.id === pv.slice(7); })[0];
+          if (pp) {
+            U.segments = pp.seg.map(function (x) { return { type: x[0], dur: x[1], rpe: x[2] }; });
+            U.planName = pp.name; loaded = true;
+          }
+        } else {
+          var mp = myPlans().filter(function (x) { return x.name === pv.slice(5); })[0];
+          if (mp) {
+            U.segments = mp.seg.map(function (x) { return { type: x.type, dur: x.dur, rpe: x.rpe }; });
+            U.planName = mp.name; loaded = true;
+          }
+        }
+        if (!loaded) throw new Error("方案不存在或已被删除");
+        U.msg = "已载入「" + U.planName + "」，可逐段修改后保存训练。"; U.err = "";
+        render(); setTimeout(previewTraining, 0); return;
+      }
+      if (u === "seg-save") {
+        collectSegments();
+        var pn = val("planName");
+        if (!pn) throw new Error("先填方案名称");
+        var list = myPlans().filter(function (x) { return x.name !== pn; });
+        list.push({ name: pn, seg: U.segments.map(function (x) { return { type: x.type, dur: x.dur, rpe: x.rpe }; }) });
+        if (!writeMyPlans(list)) throw new Error("本机存储不可用，方案未保存");
+        U.planName = pn; U.msg = "方案「" + pn + "」已保存到本机，下次可直接载入。"; U.err = "";
+        render(); setTimeout(previewTraining, 0); return;
+      }
+      if (u === "seg-delete") {
+        var dv = val("planSel");
+        if (dv.indexOf("mine:") !== 0) throw new Error("请先在下拉里选中一个「我的方案」");
+        var dn = dv.slice(5);
+        writeMyPlans(myPlans().filter(function (x) { return x.name !== dn; }));
+        U.msg = "已删除方案「" + dn + "」。"; U.err = "";
+        render(); setTimeout(previewTraining, 0); return;
+      }
+
       if (u === "save-training") {
         var ath = s.primaryAthlete;
         if (!ath) throw new Error("没有运动员档案");
-        var when = val("tWhen"), dur = Number(val("tDur")), rpe = Number(val("tRpe"));
+        var when = val("tWhen");
         if (!when) throw new Error("请选择时间");
-        if (!(dur > 0) || dur > 600) throw new Error("时长需在 1–600 分钟之间");
-        if (!(rpe >= 0) || rpe > 10) throw new Error("RPE 需在 0–10 之间");
+        var segs = collectSegments();
+        if (!segs.length) throw new Error("至少添加一段训练");
+        var bad = segs.filter(function (x) {
+          return !(x.dur > 0) || x.dur > 600 || !(x.rpe >= 0) || x.rpe > 10;
+        });
+        if (bad.length) throw new Error("每段的时长需在 1–600 分钟、RPE 需在 0–10 之间");
+        var m = segSummary(segs);
+        if (m.dur > 600) throw new Error("单次训练总时长不能超过 600 分钟");
+        var main = segs.slice().sort(function (a, b) { return b.dur - a.dur; })[0];
         var dist = val("tDist");
         U.busy = true; render();
         await DB.insert("activities", {
           org_id: ath.org_id,
           athlete_id: ath.id,
           started_at: new Date(when).toISOString(),
-          sport: val("tSport"),
-          duration_s: Math.round(dur * 60),
+          sport: typeLabel(main.type),
+          duration_s: Math.round(m.dur * 60),
           distance_m: dist === "" ? null : Math.round(Number(dist) * 1000),
-          training_load: Math.round(rpe * dur),
+          training_load: Math.round(m.tl),
           load_method: "srpe",
-          rpe: Math.round(rpe),
-          source: "manual"
+          rpe: Math.round(m.tl / m.dur),
+          source: "manual",
+          raw: { schema: "training.segments.v1", plan: U.planName || null, segments: segs }
         });
         U.busy = false;
-        U.err = ""; U.msg = "已保存。指标由服务端自动重算。";
+        U.err = ""; U.msg = "已保存 " + segs.length + " 段训练 · 本次 TL " + Math.round(m.tl) + " AU。ACWR 由服务端重算。";
         await DB.reload();
         render();
         toast("训练已记录");
@@ -645,10 +807,12 @@
     },
     openPanel: function () { U.view = "panel"; U.err = ""; U.msg = ""; render(); },
     openGate: function () { U.view = "gate"; U.tab = "signin"; U.err = ""; U.msg = ""; render(); },
-    openRecord: function () {
+    openRecord: function (scope) {
       if (!DB.isLive()) { U.view = "panel"; render(); toast("请先登录后再记录", "warn"); return; }
-      U.view = "record"; U.rec = "training"; U.err = ""; U.msg = ""; U.lastInvite = null; render();
-      setTimeout(previewTraining, 0);
+      U.scope = scope === "test" ? "test" : "train";
+      U.rec = U.scope === "test" ? "jump" : "training";
+      U.view = "record"; U.err = ""; U.msg = ""; U.lastInvite = null; render();
+      setTimeout(function () { U.scope === "test" ? previewJump() : previewTraining(); }, 0);
     },
     afterRender: afterRender,
     toast: toast,
