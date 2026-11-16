@@ -212,6 +212,31 @@ button.pill:active { transform: scale(.96); }
 :root[data-theme="dark"] .pill.demo { color: #ffb340; }
 .kbd { font-size: 10px; border: 1px solid var(--separator); border-radius: 4px; padding: 1px 4px; color: var(--text-3); }
 
+/* A1 顶栏三固定位：状态点（唯一状态提示）+ 唯一主操作。 */
+.status-dot {
+  display: inline-flex; align-items: center; gap: 7px; height: 28px; padding: 0 9px;
+  border-radius: 8px; border: 1px solid transparent; background: transparent;
+  font-size: 11.5px; font-weight: 550; color: var(--text-2); white-space: nowrap;
+  transition: background .18s, transform .1s;
+}
+button.status-dot:hover { background: var(--surface-2); }
+button.status-dot:active { transform: scale(.96); }
+.status-dot-label { line-height: 1; }
+.status-dot.ok .status-dot-label { color: var(--green); }
+.status-dot.warn .status-dot-label { color: var(--orange); }
+.status-dot.err .status-dot-label { color: var(--red); }
+.status-dot.sync .status-dot-label { color: var(--text-3); }
+.status-dot.demo .status-dot-label { color: #a06000; }
+:root[data-theme="dark"] .status-dot.demo .status-dot-label { color: #ffb340; }
+/* 唯一主操作：实心强调，和周围的状态类控件形成单一视觉焦点。 */
+.pill.primary-cta {
+  height: 32px; padding: 0 14px; border-radius: 10px;
+  background: var(--accent); border-color: var(--accent); color: #fff;
+  font-size: 12.5px; font-weight: 650; box-shadow: 0 2px 8px color-mix(in srgb, var(--accent) 24%, transparent);
+}
+button.pill.primary-cta:hover { background: color-mix(in srgb, var(--accent) 86%, #fff); color: #fff; }
+button.pill.primary-cta:active { transform: scale(.96); }
+
 .subnav {
   flex: 0 0 auto; display: none; gap: 6px; padding: 9px 16px;
   overflow-x: auto; background: var(--surface-2); border-bottom: 1px solid var(--separator);

@@ -70,8 +70,9 @@ for (const [needle, why] of TRAIN_FORBIDDEN) {
 }
 add("模块分离", "训练页只呈现 TL 与 ACWR 两张图",
   trainSrc.includes("chartTL()") && trainSrc.includes("chartACWR()"), "TL ✓ / ACWR ✓", "两者都有");
-add("模块分离", "训练页 actions 指向训练记录入口",
-  trainSrc.includes('act: "arc-record"'), "act=arc-record", "训练记录");
+add("模块分离", "训练页只给查看/导航入口，录入唯一在顶栏（C1）",
+  !trainSrc.includes('act: "arc-record"') && /primary-cta[^>]*data-act="arc-record"/.test(app),
+  "训练页 " + (trainSrc.match(/act: "arc-record"/g) || []).length + " 处 + 顶栏 1 处", "唯一录入口");
 add("模块分离", "测试页 actions 指向测试记录入口",
   labSrc.includes('act: "arc-test-record"'), "act=arc-test-record", "测试记录");
 add("模块分离", "训练记录表单不含「测试」类型选项",

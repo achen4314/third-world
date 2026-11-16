@@ -410,11 +410,21 @@
     const cls = spanCls(s.span);
     const head = s.title ? '<div class="section-head"><h3 class="section-title">' + esc(s.title) + '</h3>' + (s.sub ? '<span class="section-sub">' + esc(s.sub) + "</span>" : "") + "</div>" : "";
     if (s.type === "hero") {
+      // A2：被上提到唯一页头的 hero 不再重复渲染 kicker/title/lead/actions，
+      // 只保留证据条（一屏一张卡讲清「凭什么」），避免四层页头。
+      const lifted = !!s.lifted;
+      const evidence = s.evidence && s.evidence.map
+        ? '<div class="hero-evidence">' + s.evidence.map(e => '<div class="ev"><div class="ev-label">' + esc(e.label) + '</div><div class="ev-value">' + esc(e.value) + '</div><div class="ev-detail">' + esc(e.detail) + "</div></div>").join("") + '</div>'
+        : "";
+      if (lifted) {
+        if (!evidence) return "";
+        return '<div class="card hero hero-evidence-only span-3" ' + delay + '>' + evidence + '</div>';
+      }
       return '<div class="card hero span-3" ' + delay + '>' +
         '<div class="hero-kicker">' + esc(s.kicker) + '</div>' +
         '<h2 class="hero-title">' + esc(s.title) + '</h2>' +
         '<p class="hero-lead">' + esc(s.lead) + '</p>' +
-        '<div class="hero-evidence">' + s.evidence.map(e => '<div class="ev"><div class="ev-label">' + esc(e.label) + '</div><div class="ev-value">' + esc(e.value) + '</div><div class="ev-detail">' + esc(e.detail) + "</div></div>").join("") + '</div>' +
+        evidence +
         '<div class="hero-actions">' + (s.actions || []).map(function (a) {
           // 与页面级 actions 保持一致：支持 act / sheet / route 三种。
           // 少了 act 分支时，「记录测试」会被当成 nav 跳到 undefined，直接退回今日页。
@@ -645,6 +655,31 @@
     }
     return main;
   }
+
+  /* ── A1 / C1 / C3：顶栏精简后的二级控制与状态 ─────────────
+   * 顶栏固定三位：返回/标题、唯一主操作「＋记录训练」、状态点。
+   * 原本挤在顶栏的口径/窗口、对标评分、角色、⌘K、工作台切换下沉到
+   * 页首 chip 行（toolChips）与「工具与口径」浮层，真库/演示共用同一外壳。
+   */
+  function demoMode() {
+    return !(state.dbLive || state.dbSyncing || state.dbError || state.dbStale ||
+      (window.ARC_DB && window.ARC_DB.state && window.ARC_DB.state.session));
+  }
+  function statusInfo() {
+    if (state.dbSyncing) return { cls: "sync", on: false, label: "同步中" };
+    if (state.dbNeedAuth) return { cls: "err", on: false, label: "登录失效" };
+    if (state.dbError) return { cls: "err", on: false, label: "数据未加载" };
+    if (state.dbLive) return state.dbStale ? { cls: "warn", on: false, label: "数据可能已过期" }
+      : state.dbTruncated ? { cls: "warn", on: false, label: "部分记录超出窗口" }
+      : { cls: "ok", on: true, label: "已同步" };
+    return { cls: "demo", on: false, label: "演示数据" };
+  }
+  function toolChips() {
+    return '<button class="chip" data-act="palette">' + icon("search", 12) + ' 搜索 <span class="kbd">⌘K</span></button>' +
+      '<button class="chip" data-act="workspace">' + icon(state.workspace === "admin" ? "arrow" : "shield", 12) +
+      ' ' + (state.workspace === "admin" ? "返回运动员" : "工作台") + '</button>' +
+      '<button class="chip" data-act="sheet" data-sheet="tools">' + icon("sliders", 12) + ' 工具与口径</button>';
+  }
   const curWindow = () => (window.ARC_LIVE ? window.ARC_LIVE.state.window : state.params.window);
   const analyzeChips = () => [
     '<button class="chip strong" data-act="sheet" data-sheet="window">口径 · ' + (state.params.tl === "srpe" ? "sRPE" : state.params.tl.toUpperCase()) + '</button>',
@@ -730,7 +765,7 @@
         { label: "今日计划", value: TODAY.planCount, unit: "课", delta: TODAY.planText, go: "train/session" }
       ], 3),
       S_cards("今日三个入口", "训练、测试、数据各自独立", [
-        { icon: "train", title: "记录今天的训练", sub: "8 类训练 · 多段自由搭配 · 只算 TL 与 ACWR", value: "进入", route: "train" },
+        { icon: "train", title: "查看训练记录", sub: "8 类训练 · 多段自由搭配 · 只算 TL 与 ACWR", value: "进入", route: "train/calendar" },
         { icon: "lab", title: "测试模块", sub: "CMJ / SJ / DJ / VBT / 冲刺 / 筛查 · 不计入 TL", value: "进入", route: "lab" },
         { icon: "database", title: "设备与缺测", sub: (state.dbLive
             ? (A.DEVICES.length + " 台在用 · " + (A.SRV || []).filter(d => d.tl === null).length + " 天缺测")
@@ -766,6 +801,8 @@
       { label: "计划完成率", value: "—", delta: "本周未排课", go: "train/calendar", na: true },
       { label: "缺测天数", value: "—", unit: "天", delta: "28 日窗口内", go: "data/quality", na: true }
     ];
+    // C1：训练页不再直接打开录入浮层。全局唯一录入口固定在顶栏「＋ 记录训练」；
+    // 这里只给「查看/导航」类动作，避免同一动作三个入口。
     page("train", "训练", "练了什么、接下来练什么？", "TRAIN / 概览", [
       S_metrics(overviewMetrics),
       S_chart("日负荷 TL", "近 14 日 · 本模块只呈现 TL 与 ACWR", chartTL(), 2, { drillId: "tl.srpe",
@@ -778,7 +815,7 @@
       S_cards("近期训练", "点按进入单次训练详情", A.SESSIONS.slice(0, 5).map(s => ({ icon: "today", title: s.name, sub: s.date + " · " + s.sport + " · " + s.dur, value: s.tl ? "TL " + s.tl : "休息", route: "train/session", sid: s._id })), 1),
       S_note("模块边界", "训练模块只计算 <b>TL</b> 与 <b>ACWR</b>，包含计划、日历、单次记录、周期与训练方案库；" +
         "<b>CMJ / SJ / DJ、VBT、冲刺、筛查等测试项目一律在「测试」模块</b>，不写进训练负荷。", "info", 3)
-    ], { chips: [dataChip()], actions: [{ label: "＋ 记录训练", act: "arc-record", primary: true }, { label: "训练方案库", route: "train/library" }] });
+    ], { chips: [dataChip()], actions: [{ label: "查看训练记录", route: "train/calendar", primary: true }, { label: "训练方案库", route: "train/library" }] });
 
     page("train/calendar", "训练日历", "这一周 / 月计划与完成的差在哪？", "TRAIN / 二级", [
       S_chart("近 14 日日负荷 TL", "柱=当日 TL；缺测日为「—」", chartTL(), 2, { drillId: "tl.srpe", legend: [{ name: "日 TL", color: "var(--accent)" }] }),
@@ -975,9 +1012,10 @@
         S_table("预设搭配方案", "只是「段的结构」，不是已发生的训练；载入后可逐段改",
           ["方案", "结构", "段数", "建议总时长", "侧重"], presetRows, 3,
           { note: "建议时长只作起点；实际 RPE 与时长由你填写，保存后才产生 TL。方案本身不含任何成绩或负荷数值。" }),
-        S_note("自行搭配", "在「＋ 记录训练」里可以 <b>增删任意段</b>、逐段选类型与 RPE，" +
+        // C1：不再内嵌第二个录入按钮。统一指向顶栏那个唯一主入口。
+        S_note("自行搭配", "点右上角 <b>＋ 记录训练</b> 可 <b>增删任意段</b>、逐段选类型与 RPE，" +
           "也可以把常用组合<b>保存为我的方案</b>下次直接载入。<b>TL = Σ(每段 RPE × 每段时长)</b>，ACWR 由服务端按日负荷重算。",
-          "info", 3, { label: "开始搭配训练", act: "arc-record" })
+          "info", 3)
       ];
       if (!state.dbLive || !lib.length) {
         return base.concat([
@@ -2262,33 +2300,21 @@
     side += '</div><div class="side-foot">第三世界 · 训练负荷与就绪度<br>数据仅供训练参考，不构成医学建议</div>';
     document.getElementById("sidebar").innerHTML = side;
 
-    // Topbar
+    // Topbar（A1）：只保留三个固定位。
+    //   ① 返回 / 标题（面包屑）；② 唯一主操作「＋ 记录训练」；③ 状态点（点开数据源诊断）。
+    // 原先挤在这里的角色、实时 1 Hz、即时刷新、对标评分、窗口口径、工作台、⌘K 全部
+    // 下沉到页首 chip 行（toolChips）与「工具与口径」浮层，避免同一状态在多处重复。
+    // 真库与演示共用同一外壳——不再出现「登录后界面换了一套」的观感（B3）。
     const pg = P[state.route] || P.today;
     const sec = state.route.indexOf("/") >= 0;
+    const st = statusInfo();
     let top = (sec ? '<button class="icon-btn" data-act="back" title="返回上一级">' + icon("back", 15) + '</button>' : "") +
       (sec ? '<span class="crumb"><b>' + (isAdmin ? "教练工作台" : group.label) + '</b> / ' + esc(pg.title) + '</span>'
            : '<span class="topbar-title">' + esc(pg.title) + '</span>') +
       '<span class="topbar-spacer"></span>' +
-      (isAdmin ? '<button class="pill accent" data-act="sheet" data-sheet="roles">' + icon("shield", 13) + ' ' + roleLabel(state.role) + '</button>' : "") +
-      // 真库模式（含同步中/失败/过期）都不摆「实时 · 1 Hz」与「对标评分」：前者是本地仿真推流，
-      // 后者是厂商评分占位，摆在真实数字旁边会被当成真有数据在推、真有厂商评分。
-      (state.dbLive || state.dbSyncing || state.dbError || state.dbStale ||
-       (window.ARC_DB && window.ARC_DB.state && window.ARC_DB.state.session) ? "" :
-        '<button class="pill hide-phone live-pill" data-act="live-toggle" title="暂停 / 继续实时推流"><span class="live-dot on" data-live-dot></span><span data-live-label>实时 · 1 Hz</span></button>' +
-        '<button class="icon-btn hide-phone" data-act="live-refresh" title="即时刷新" aria-label="即时刷新">↻</button>' +
-        '<button class="pill hide-phone" data-act="sheet" data-sheet="scores">对标评分</button>') +
-      '<button class="pill hide-phone" data-act="sheet" data-sheet="window">28 日 · ' + (state.params.acwr === "ewma" ? "EWMA" : "rolling") + '</button>' +
-      (state.dbSyncing
-        ? '<span class="pill sync" title="正在同步数据">同步中</span>'
-        : state.dbNeedAuth
-        ? '<span class="pill err" title="' + esc(state.dbReason) + '">请重新登录</span>'
-        : state.dbError
-        ? '<span class="pill err" title="' + esc(state.dbReason) + '">数据未加载</span>'
-        : state.dbLive
-        ? '<button class="pill accent" data-act="arc-record">＋ 记录训练</button><span class="pill ' + (state.dbStale || state.dbTruncated ? "warnp" : "live") + '" title="' + esc(state.dbReason || "数据来自你的训练记录，行级权限已生效") + '">' + (state.dbStale ? "数据可能已过期" : state.dbTruncated ? "部分记录超出窗口" : "已同步") + '</span>'
-        : '<span class="pill demo" title="尚未连接数据源">未连接</span>') +
-      '<button class="pill accent" data-act="workspace">' + icon(isAdmin ? "arrow" : "shield", 13) + (isAdmin ? " 返回" : " 工作台") + '</button>' +
-      '<button class="pill kbd-hint" data-act="palette">' + icon("search", 13) + '<span class="kbd">⌘K</span></button>';
+      '<button class="status-dot ' + st.cls + '" data-act="db-panel" title="' + esc(st.label) + ' · 点开数据源诊断" aria-label="数据源状态：' + esc(st.label) + '">' +
+        '<span class="live-dot' + (st.on ? " on" : "") + '"></span><span class="status-dot-label">' + esc(st.label) + '</span></button>' +
+      '<button class="pill accent primary-cta" data-act="arc-record" title="记录一次训练">' + icon("plus", 13) + ' 记录训练</button>';
     document.getElementById("topbar").innerHTML = top;
 
     // Subnav (iPhone)
@@ -2341,8 +2367,26 @@
         '<button class="btn" data-act="sheet" data-sheet="roles">切换视角</button></div></div>';
       return;
     }
-    const chips = (pg.chips || []).join("");
-    const actions = (pg.actions || []).map(function (a) {
+    const chips = (pg.chips || []).join("") + toolChips();
+    // A2：把首个 hero 的 kicker/title/lead/actions 上提到唯一页头，hero 只保留证据条，
+    // 避免「页头一套标题+按钮、hero 又一套」的四层页头。动作合并去重后最多两个。
+    let headEyebrow = pg.eyebrow || "", headTitle = pg.title, headQuestion = pg.question || "";
+    let headActions = (pg.actions || []).slice();
+    const sections0 = pg.sections.slice();
+    if (sections0.length && sections0[0] && sections0[0].type === "hero") {
+      const h = sections0[0];
+      headEyebrow = h.kicker || headEyebrow;
+      headTitle = h.title || headTitle;
+      headQuestion = h.lead || headQuestion;
+      const seen = {}, merged = [];
+      headActions.concat(h.actions || []).forEach(function (a) {
+        const k = (a.label || "") + "|" + (a.act || a.sheet || a.route || "");
+        if (!seen[k] && merged.length < 2) { seen[k] = 1; merged.push(a); }
+      });
+      headActions = merged;
+      sections0[0] = Object.assign({}, h, { lifted: true });
+    }
+    const actions = headActions.map(function (a) {
       const attrs = a.act
         ? 'data-act="' + esc(a.act) + '"' + (a.id ? ' data-id="' + esc(a.id) + '"' : "")
         : (a.sheet
@@ -2353,7 +2397,8 @@
     // docs/04：按界面注入实时控制条 / 对标评分 / 数据融合（不改变既有路由与层级）
     // 这三块全是模拟占位（1 Hz 假流、厂商评分占位、映射示意）。真库模式下必须关掉：
     // 「实时 · 1 Hz / 最新更新 18:29:40 / device.sample」配着真实数字出现，会被读成真有数据在推。
-    let sections = pg.sections.slice();
+    // A2：以 sections0 为基底（首个 hero 已标记 lifted），后续演示占位/告警仍按原逻辑插入。
+    let sections = sections0;
     const LV = state.dbLive ? null : window.ARC_LIVE;
     // 数据不是「此刻」的、或窗口被截断时，把这件事放在第一屏最上面。
     // 不写在角标里——角标会被忽略，横幅不会。
@@ -2389,10 +2434,11 @@
       if (scoreMap[state.route]) sections.push(S_scores(scoreMap[state.route]));
       if (["data/sources", "data/import", "data/devices", "lab/vbt", "lab/calibration"].indexOf(state.route) >= 0) sections.push(S_fusion());
     }
+    // A2：唯一页头。标题/引导语/动作来自「首个 hero 上提后」的合并结果，不再另起一套。
     content.innerHTML = '<div class="page"><div class="page-head">' +
-      '<div class="page-eyebrow">' + esc(pg.eyebrow || "") + '</div>' +
-      '<h1 class="page-title">' + esc(pg.title) + '</h1>' +
-      '<p class="page-question">' + esc(pg.question || "") + '</p>' +
+      '<div class="page-eyebrow">' + esc(headEyebrow) + '</div>' +
+      '<h1 class="page-title">' + esc(headTitle) + '</h1>' +
+      '<p class="page-question">' + esc(headQuestion) + '</p>' +
       '<div class="page-chips">' + chips + '</div>' +
       (actions ? '<div class="page-actions">' + actions + '</div>' : "") +
       '</div><div class="page-grid">' + sections.map(renderSection).join("") + '</div></div>';
@@ -2514,6 +2560,25 @@
           '<div class="note warn">rolling 版急性窗包含在慢性窗内存在数学耦合；以 EWMA 为主口径，并同时展示两口径差异。口径变更会保留 calc_version 留痕。</div>' +
           '<div class="note" style="margin-top:8px"><b>说明（不补造）</b>：TL 口径与 ACWR 主口径选择目前只更新标签，<b>不重算数值</b>——原型缺少各 TL 口径所需的原始输入（HR 时序 / 功率 / RPE），凭空换算等于补造数据。生产环境由 <code>metric-registry</code> 按口径读取真实输入重算，并保留 calc_version。窗口与 HRV 上下文为真实即时生效项。</div>',
         footer: foot(closeBtn + '<button class="btn primary" data-act="close">应用</button>') };
+    }
+    if (t === "tools") {
+      // A1：顶栏下沉的二级控制集中在这里。真库模式不摆仿真推流与厂商评分（B3）。
+      let body = '<div class="note info">窗口与口径选择后页面原地刷新；真库模式下数值由服务端按口径重算，本浮层只改展示口径，不补造数据。</div>' +
+        '<div class="sheet-section-title">口径与窗口</div>' +
+        '<div class="form-row"><label>分析窗口</label><select data-act="param" data-key="window">' + [7, 28, 42, 90].map(v => '<option value="' + v + '" ' + (curWindow() === v ? "selected" : "") + '>' + v + ' 日</option>').join("") + '</select></div>' +
+        '<div class="form-row"><label>ACWR 主口径</label><select data-act="param" data-key="acwr">' + [["ewma", "EWMA（推荐）"], ["rolling", "rolling 7/28"]].map(v => '<option value="' + v[0] + '" ' + (state.params.acwr === v[0] ? "selected" : "") + '>' + v[1] + '</option>').join("") + '</select></div>';
+      if (demoMode()) {
+        body += '<div class="sheet-section-title">演示控制</div>' +
+          '<div class="list">' + row({ icon: "chart", title: "对标评分与阈值", sub: "公开口径 · DEMO 占位", sheet: "scores" }) + '</div>' +
+          '<button class="btn" style="margin-top:8px" data-act="live-toggle">暂停 / 继续实时 · 1 Hz 推流</button>';
+      }
+      if (state.workspace === "admin") {
+        body += '<div class="sheet-section-title">视角</div><div class="note info">当前角色：<b>' + esc(roleLabel(state.role)) + '</b>。角色由组织成员关系决定，可在下方切换演示视角。</div>' +
+          '<div class="list">' + A.ROLES.map(r => row({ icon: "shield", title: r.label, sub: r.id, value: state.role === r.id ? "当前" : "切换", sheet: "roles", sheetId: r.id, badge: state.role === r.id ? "当前" : undefined, badgeTone: "info" })).join("") + '</div>';
+      }
+      return { title: "工具与口径", subtitle: "窗口 / 口径 / 演示控制 / 视角 · 顶栏二级项", small: true,
+        body: body,
+        footer: foot(closeBtn) };
     }
     if (t === "roles") {
       return { title: "角色与权限", subtitle: "O8 · 切换角色以验证 RBAC 呈现", small: true,

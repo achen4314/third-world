@@ -1,16 +1,16 @@
-/* 第三世界 · iPad 版 离线缓存 · 81a45700 */
-const CACHE = "arc-ipad-81a45700";
+/* 第三世界 · iPad 版 离线缓存 · 149da8f3 */
+const CACHE = "arc-ipad-149da8f3";
 const ASSETS = [
   "./",
   "./index.html",
   "./manifest.webmanifest",
-  "./env.js?v=81a45700",
-  "./data.js?v=81a45700",
-  "./live.js?v=81a45700",
-  "./app.js?v=81a45700",
-  "./supabase-client.js?v=81a45700",
-  "./ui-flows.js?v=81a45700",
-  "./styles.css?v=81a45700",
+  "./env.js?v=149da8f3",
+  "./data.js?v=149da8f3",
+  "./live.js?v=149da8f3",
+  "./app.js?v=149da8f3",
+  "./supabase-client.js?v=149da8f3",
+  "./ui-flows.js?v=149da8f3",
+  "./styles.css?v=149da8f3",
   "./icons/apple-touch-icon.png",
   "./icons/icon-192.png",
   "./icons/icon-512.png"
