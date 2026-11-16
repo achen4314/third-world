@@ -1,14 +1,14 @@
 {
-  "version": "149da8f3",
-  "builtAt": "2026-11-16T09:52:52.687Z",
+  "version": "778f216c",
+  "builtAt": "2026-11-16T09:57:12.476Z",
   "core": {
     "env.js": "40152c64de90b0243ddff802afd0e5ccc9c08a961980f5a54f327564179b65fa",
-    "data.js": "0067082603f10c382caab37dea4bc65769c496b202adb017b2ac6ee6a80550cb",
+    "data.js": "99a6925198aeaa61022cc89fc10326e2340aa501d5629e1506ed9951810f00e0",
     "live.js": "aba105518b70044e6e74176514e79ca00495369d76e29ec0be8acd6e5a8b1104",
-    "app.js": "7c459562414be62f400c2817efbbd78a5ce2dfc972b1d5cbfe556c39df9e64e8",
+    "app.js": "5285d2bcfa74fcb2ecb1dee669de5f1385239c0b9ec010bcfb522522132e14f2",
     "supabase-client.js": "ba12f3a8dc8449fc2a02f12a959cf3c7dc8788ac4da6d40263110bb217d2dd92",
     "ui-flows.js": "3604b91b6a5828f67f9a936cc26706496e448780e71d1a3efe47ff21e7858f0a",
-    "styles.css": "301ab05212f0b2df5206647f868a7aa0dc800ae4305b1ea7a6d9ea6fbdb0982c"
+    "styles.css": "f3421357fa2a3628fc2ba49d32c56e897f4b6c0086fff79d379127ea3bd054bd"
   },
   "coreIdentical": true,
   "platforms": [

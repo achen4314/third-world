@@ -339,12 +339,28 @@ button.chip:active { transform: scale(.95); }
 .metric-card:hover { border-color: color-mix(in srgb, var(--accent) 35%, transparent); box-shadow: var(--shadow); }
 .metric-card:active { transform: scale(.975); }
 .metric-label { font-size: 11.5px; color: var(--text-2); display: flex; align-items: center; gap: 5px; }
+.metric-value-line { display: flex; align-items: center; gap: 6px; }
 .metric-value { font-size: 27px; font-weight: 680; letter-spacing: -.025em; margin: 5px 0 1px; font-variant-numeric: tabular-nums; line-height: 32px; }
 .metric-value.na { color: var(--text-3); font-size: 23px; }
 .metric-unit { font-size: 11.5px; color: var(--text-3); font-weight: 500; margin-left: 3px; }
 .metric-delta { font-size: 11px; color: var(--text-2); }
-.metric-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 9px; }
-.metric-chips .chip { height: 20px; font-size: 10px; padding: 0 6px; }
+/* C2：数据不足时给出可点的下一步，而不是只丢一句术语。 */
+button.metric-delta-action {
+  display: inline-block; text-align: left; padding: 0; border: 0; background: transparent;
+  font-size: 11px; color: var(--accent); cursor: pointer; text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--accent) 40%, transparent); text-underline-offset: 2px;
+}
+button.metric-delta-action:hover { text-decoration-color: var(--accent); }
+button.metric-delta-action:active { opacity: .7; }
+/* A3：元信息按需下钻。极小、低调，但可点。 */
+.metric-info {
+  flex: 0 0 15px; width: 15px; height: 15px; margin-top: 4px; border-radius: 50%;
+  border: 1px solid var(--separator); background: var(--surface-2); color: var(--text-3);
+  font-size: 10px; font-weight: 700; line-height: 13px; text-align: center; padding: 0;
+  transition: color .15s, border-color .15s, transform .1s;
+}
+button.metric-info:hover { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
+button.metric-info:active { transform: scale(.88); }
 
 .chart-host { width: 100%; height: var(--chart-h, 220px); position: relative; }
 .chart-host svg { display: block; width: 100%; height: 100%; overflow: visible; }

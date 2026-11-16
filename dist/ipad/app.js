@@ -43,6 +43,9 @@
     workspace: "athlete", route: "today",
     params: { window: 28, tl: "srpe", acwr: "ewma", context: "night" },
     injectMissing: false, calibrated: false, demoSource: "import",
+    // B3：演示占位（1 Hz 假流 / 对标评分 / 数据融合示意）默认关闭。
+    // 真库模式无论此开关如何都不会注入，避免"登录后界面换了一套"。
+    demoFx: false,
     sheet: null, palette: false, paletteIndex: 0, manualType: "jump",
     manualCount: 0,
     // true = 当前页面数据来自 Supabase 真实库（RLS 生效）；false = 演示常量
@@ -141,7 +144,7 @@
   const lvpPts = A.VBT_SETS.map(s => ({ x: s.load, y: s.mpv }));
   const LVP = regression(lvpPts);
   // LVP 的 R² 门槛（0.95）与 V1RM 标定是并列硬条件：缺任一都不输出 1RM。
-  // 文案在 lab/calibration 与 metric-registry 均已声明 0.95，此前代码只查了 calibrated。
+  // 文案在 measure/calibration 与 metric-registry 均已声明 0.95，此前代码只查了 calibrated。
   function oneRM() {
     return state.calibrated && LVP.r2 !== null && LVP.r2 >= 0.95 && LVP.a !== 0
       ? (V1RM - LVP.b) / LVP.a : null;
@@ -356,9 +359,6 @@
   /* ── 组件片段 ───────────────────────────────────────── */
   function chip(text, act, extra) { return '<button class="chip" data-act="' + (act || "sheet") + '" ' + (extra || "") + '>' + text + '</button>'; }
   function drill(id, label) { return chip("ⓘ 口径 · " + esc(label || (A.METRICS[id] ? A.METRICS[id].short : id)), "sheet", 'data-sheet="metric" data-id="' + esc(id) + '"'); }
-  function trio(id, win, src) {
-    return drill(id) + chip("窗口 · " + esc(win), "sheet", 'data-sheet="window"') + chip("来源 · " + esc(src), "sheet", 'data-sheet="metric" data-id="' + esc(id) + '"');
-  }
   function badge(text, tone) { return '<span class="badge ' + (tone || "") + '">' + esc(text) + "</span>"; }
   function row(it) {
     const act = it.route ? "nav" : (it.sheet ? "sheet" : "none");
@@ -373,12 +373,24 @@
   }
   function metricCard(m) {
     const act = m.go ? "nav" : "sheet";
-    const attrs = m.go ? 'data-route="' + esc(m.go) + '"' : 'data-sheet="metric" data-id="' + esc(m.metricId || "ctl") + '"';
+    const mid = m.metricId || "";
+    const attrs = m.go ? 'data-route="' + esc(m.go) + '"' : 'data-sheet="metric" data-id="' + esc(mid || "ctl") + '"';
+    // A3：卡内只保留 label / value / 一行短说明。metric_id、窗口、来源这些元信息
+    // 默认收起，点在数值旁的 i 下钻到已有口径浮层，不再默认占用视觉带宽。
+    const info = mid
+      ? '<button class="metric-info" data-act="sheet" data-sheet="metric" data-id="' + esc(mid) +
+        '" title="口径、窗口与来源" aria-label="查看口径、窗口与来源">i</button>'
+      : "";
+    // C2：不可计算的卡片不再只丢一句术语。短句可点，点开列出「还缺什么 + 去哪补」。
+    const delta = (m.na && mid)
+      ? '<button class="metric-delta metric-delta-action" data-act="sheet" data-sheet="gap" data-id="' + esc(mid) +
+        '" title="' + esc(m.delta || "") + '">数据不足 · 看还缺什么</button>'
+      : '<div class="metric-delta">' + esc(m.delta || "") + '</div>';
     return '<div class="metric-card" role="button" tabindex="0" data-act="' + act + '" ' + attrs + '>' +
       '<div class="metric-label">' + esc(m.label) + '</div>' +
-      '<div class="metric-value ' + (m.na ? "na" : "") + '">' + esc(m.value) + (m.unit ? '<span class="metric-unit">' + esc(m.unit) + "</span>" : "") + '</div>' +
-      '<div class="metric-delta">' + esc(m.delta || "") + '</div>' +
-      '<div class="metric-chips">' + (m.chips || (m.metricId ? trio(m.metricId, m.win || "28 日", m.src || "device") : "")) + '</div></div>';
+      '<div class="metric-value-line"><div class="metric-value ' + (m.na ? "na" : "") + '">' + esc(m.value) +
+        (m.unit ? '<span class="metric-unit">' + esc(m.unit) + "</span>" : "") + '</div>' + info + '</div>' +
+      delta + '</div>';
   }
 
   /* ── 区块工厂 ───────────────────────────────────────── */
@@ -766,7 +778,7 @@
       ], 3),
       S_cards("今日三个入口", "训练、测试、数据各自独立", [
         { icon: "train", title: "查看训练记录", sub: "8 类训练 · 多段自由搭配 · 只算 TL 与 ACWR", value: "进入", route: "train/calendar" },
-        { icon: "lab", title: "测试模块", sub: "CMJ / SJ / DJ / VBT / 冲刺 / 筛查 · 不计入 TL", value: "进入", route: "lab" },
+        { icon: "lab", title: "测量模块", sub: "CMJ / SJ / DJ / VBT / 冲刺 / 筛查 · 不计入 TL", value: "进入", route: "measure" },
         { icon: "database", title: "设备与缺测", sub: (state.dbLive
             ? (A.DEVICES.length + " 台在用 · " + (A.SRV || []).filter(d => d.tl === null).length + " 天缺测")
             : "5 台在用 · 2 天缺测"), value: "进入", route: "data/quality" }
@@ -1170,7 +1182,7 @@
         ? "数值来自 <b>daily_metrics</b>：写入 activities / 恢复数据时由数据库触发器算好落库，前端只渲染。这样「App 里的数」和「导出的数」不会是两个数。"
         : "计算在此页实时执行：TL → EWMA CTL/ATL → TSB → ACWR 双口径 → TM/TS。用例 2/3/4/7 可直接核验。" }));
 
-      out.push(S_note("分析页边界", "本页<b>只读</b>：不提供录入控件、不显示团队聚合。需要写入进 <b>lab/*</b> 或 <b>data/import</b>；需要团队视图进 <b>教练工作台 · 数据看板</b>。", "", 3));
+      out.push(S_note("分析页边界", "本页<b>只读</b>：不提供录入控件、不显示团队聚合。需要写入进 <b>measure/*</b> 或 <b>data/import</b>；需要团队视图进 <b>教练工作台 · 数据看板</b>。", "", 3));
       return out;
     })(), { chips: analyzeChips(), actions: [{ label: "窗口与口径", sheet: "window" }, { label: "查看周期计划", route: "train/plan", primary: true }] });
 
@@ -1341,9 +1353,9 @@
             esc(s.load), s.mpv.toFixed(2), s.mcv.toFixed(2), s.pv.toFixed(2), s.vl.toFixed(1), esc(s.p), "P ≈ m·g·v"
           ]), 3, { note: "功率使用等速近似口径，已在结果标注；精确式 P=F·v 需加速度样本。" }),
           S_note(oneRM() === null ? "1RM 当前不可计算" : "1RM 已计算", oneRM() === null
-            ? "1RM 需同时满足 <b>V1RM 已标定</b> 且 <b>LVP 回归 R² ≥ 0.95</b>（当前 R² = " + fmt(LVP.r2, 3) + "）。任一条件不满足都返回「不可计算」，不用经验系数硬凑。可在 <b>lab/calibration</b> 写入标定值。"
+            ? "1RM 需同时满足 <b>V1RM 已标定</b> 且 <b>LVP 回归 R² ≥ 0.95</b>（当前 R² = " + fmt(LVP.r2, 3) + "）。任一条件不满足都返回「不可计算」，不用经验系数硬凑。可在 <b>measure/calibration</b> 写入标定值。"
             : "已使用默认标定值 V1RM = 0.30 m/s，R² = " + fmt(LVP.r2, 3) + " ≥ 0.95，结果 = (0.30 − b) / a = <b>" + fmt(oneRM(), 1) + " kg</b>。", oneRM() === null ? "warn" : "info", 3,
-            { label: oneRM() === null ? "前往标定" : "查看标定配置", route: "lab/calibration" })
+            { label: oneRM() === null ? "前往标定" : "查看标定配置", route: "measure/calibration" })
         ];
       }
 
@@ -1355,8 +1367,8 @@
           S_note("还没有 VBT 采集记录", "这个账号下没有任何同时具备<b>负荷</b>与<b>平均推进速度</b>的组数据。" +
             "VBT 分析必须基于真实采集——这里不预填示例曲线，也不凭重量反推速度。", "info", 3),
           S_cards("下一步", "采集一次就能出结果", [
-            { icon: "bolt", title: "去做 VBT 采集", sub: "lab/vbt · IMU 拉取或手动填入", value: "进入", route: "lab/vbt" },
-            { icon: "list", title: "查看测试历史", sub: "lab/history · 与同条件对比", value: "进入", route: "lab/history" }
+            { icon: "bolt", title: "去做 VBT 采集", sub: "measure/vbt · IMU 拉取或手动填入", value: "进入", route: "measure/vbt" },
+            { icon: "list", title: "查看测试历史", sub: "measure/history · 与同条件对比", value: "进入", route: "measure/history" }
           ], 2)
         ];
       }
@@ -1364,7 +1376,7 @@
       const best = sets.slice().sort((a, b) => b.mpv - a.mpv)[0];
       const vlMax = sets.reduce((m, s) => (s.vl !== null && s.vl > m ? s.vl : m), 0);
       const reg = pf && pf.ok ? { a: Number(pf.slope), b: Number(pf.intercept), r2: Number(pf.r2) } : null;
-      // 前端同样执行 R² 门槛（0.95），与 lab/calibration 及 registry 声明一致；
+      // 前端同样执行 R² 门槛（0.95），与 measure/calibration 及 registry 声明一致；
       // 服务端 arc_vbt_profile 返回 r2 供判断，阈值本身的口径修订待用户确认。
       const oneRMv = pf && pf.ok && pf.r2 != null && Number(pf.r2) >= 0.95 && pf.load_1rm != null
         ? Number(pf.load_1rm) : null;
@@ -1400,7 +1412,7 @@
         oneRMv === null ? "warn" : "info", 3, { label: "查看规则版本", route: "admin/rules" }));
 
       return out;
-    })(), { chips: [dataChip()], actions: [{ label: "查看采集页", route: "lab/vbt", primary: true }] });
+    })(), { chips: [dataChip()], actions: [{ label: "查看采集页", route: "measure/vbt", primary: true }] });
 
     page("analyze/jump", "跳跃表现", "爆发力与左右对称性趋势如何？", "ANALYZE / 跳跃", (function () {
       if (!state.dbLive) {
@@ -1433,8 +1445,8 @@
           S_note("还没有跳跃测试记录", "库里的 <b>jump_tests</b> 是空的。高度由腾空时间算（h = g·t²/8），" +
             "RSI 由高度与接触时间算——没有腾空时间就没有高度，此处不填示例值。", "info", 3),
           S_cards("下一步", "一次 CMJ 就能出结果", [
-            { icon: "bolt", title: "新建跳跃测试", sub: "lab/jump · CMJ / SJ / DJ", value: "进入", route: "lab/jump" },
-            { icon: "list", title: "测试历史", sub: "lab/history · 同条件对比", value: "进入", route: "lab/history" }
+            { icon: "bolt", title: "新建跳跃测试", sub: "measure/jump · CMJ / SJ / DJ", value: "进入", route: "measure/jump" },
+            { icon: "list", title: "测试历史", sub: "measure/history · 同条件对比", value: "进入", route: "measure/history" }
           ], 2)
         ];
       }
@@ -1480,7 +1492,7 @@
 
       out.push(S_note("同条件对比规则", "地面、鞋、测试时间不一致时，对比<b>不成立</b>；不跨条件合并数据。左右不对称与最优 FVP 需双侧设备或标定后才计算。", "warn", 3));
       return out;
-    })(), { chips: [dataChip()], actions: [{ label: "新建跳跃测试", route: "lab/jump", primary: true }] });
+    })(), { chips: [dataChip()], actions: [{ label: "新建跳跃测试", route: "measure/jump", primary: true }] });
 
     page("analyze/report", "报告与导出", "如何把结论带走？", "ANALYZE / 报告", (function () {
       const LIVE = state.dbLive;
@@ -1533,7 +1545,7 @@
 
   /* 测试 */
   (function () {
-    page("lab", "测试", "现在做一次测量，结果是多少？", "LAB / 写入口", [
+    page("measure", "测量", "现在做一次测量，结果是多少？", "MEASURE / 写入口", [
       S_hero({ kicker: "写入区域 · 与「分析」严格分离", title: "选一个协议，完成一次测量",
         lead: "测试页负责采集与即时反馈；保存后停留在原地，不打断连续测试。长期趋势与对比请进分析页。",
         evidence: [
@@ -1542,19 +1554,19 @@
           { label: "来源规则", value: "互斥", detail: "import 与 manual 不合并计算" }
         ], actions: [{ label: "＋ 记录测试", act: "arc-test-record", primary: true }] }),
       S_metrics([
-        { label: "今日测试", value: "3", unit: "次", delta: "CMJ / SJ / DJ", go: "lab/history" },
+        { label: "今日测试", value: "3", unit: "次", delta: "CMJ / SJ / DJ", go: "measure/history" },
         { label: "IMU 采样率", value: "200", unit: "Hz", delta: "imu-001 · 已登记", go: "data/devices" },
-        { label: "视频帧率", value: "240", unit: "fps", delta: "必须随数据保存", go: "lab/calibration" },
-        { label: "当前来源", value: state.demoSource === "import" ? "import" : "manual", delta: "与另一来源互斥筛选", go: "lab/vbt" }
+        { label: "视频帧率", value: "240", unit: "fps", delta: "必须随数据保存", go: "measure/calibration" },
+        { label: "当前来源", value: state.demoSource === "import" ? "import" : "manual", delta: "与另一来源互斥筛选", go: "measure/vbt" }
       ]),
       S_protocols("测试协议", "对应 My Jump Lab 能力域，按公开方法独立实现", 2),
-      S_cards("最近测试", "点按进入历史与同条件对比", A.JUMPS.slice(0, 4).map(j => ({ icon: "bolt", title: j.type + " · " + j.date, sub: j.method + " · " + j.cond, value: cm(jumpH(j.tf)) + " cm", route: "lab/history" })), 1),
-      S_note("测试 ↔ 分析边界", "<b>lab/*</b> 采集与写入、实时反馈、设备/录入通道；<b>analyze/*</b> 只读再计算与对比。测试页不显示 90 日趋势，分析页不提供录入控件。", "info", 3)
+      S_cards("最近测试", "点按进入历史与同条件对比", A.JUMPS.slice(0, 4).map(j => ({ icon: "bolt", title: j.type + " · " + j.date, sub: j.method + " · " + j.cond, value: cm(jumpH(j.tf)) + " cm", route: "measure/history" })), 1),
+      S_note("测试 ↔ 分析边界", "<b>measure/*</b> 采集与写入、实时反馈、设备/录入通道；<b>analyze/*</b> 只读再计算与对比。测试页不显示 90 日趋势，分析页不提供录入控件。", "info", 3)
     ], { chips: [dataChip()], actions: [{ label: "IMU 拉取", sheet: "imu" }, { label: "手动录入", sheet: "manual" }] });
 
-    page("lab/vbt", "VBT 采集", "这一组每次重复的速度是多少？", "LAB / VBT", [
+    page("measure/vbt", "VBT 采集", "这一组每次重复的速度是多少？", "MEASURE / VBT", [
       S_metrics([
-        { label: "当前组", value: "80", unit: "kg", delta: "后蹲 · 第 3 组", go: "lab/history" },
+        { label: "当前组", value: "80", unit: "kg", delta: "后蹲 · 第 3 组", go: "measure/history" },
         { label: "最佳 MPV", value: "0.72", unit: "m/s", delta: "R1 · 本次", metricId: "vbt.mcv", win: "每次重复", src: "import" },
         { label: "末次 MPV", value: "0.55", unit: "m/s", delta: "R6 · 本次", metricId: "vbt.mcv", win: "每次重复", src: "import" },
         { label: "速度损失 VL%", value: "23.6", unit: "%", delta: "(0.72−0.55)/0.72 · 阈值 20% 可配置", metricId: "vbt.vl", win: "每组", src: "import" }
@@ -1576,7 +1588,7 @@
       S_note("双通道互斥规则", "同一组数据分别用 import 与 manual 录入时，<b>派生指标完全一致</b>，因为 source 只用于筛选、不参与计算；两种来源在筛选时互斥，绝不合并。", "warn", 1)
     ], { chips: [dataChip(), '<button class="chip" data-act="sheet" data-sheet="window">来源 · ' + state.demoSource + '</button>'], actions: [{ label: "从 IMU 拉取", sheet: "imu", primary: true }, { label: "手动填入", sheet: "manual" }] });
 
-    page("lab/jump", "跳跃采集", "这次跳多高、RSI 多少？", "LAB / 跳跃", [
+    page("measure/jump", "跳跃采集", "这次跳多高、RSI 多少？", "MEASURE / 跳跃", [
       S_metrics([
         { label: "CMJ 高度", value: cm(jumpH(0.512)), unit: "cm", delta: "h = g·t_f²/8", metricId: "jump.height", win: "每次", src: "import" },
         { label: "腾空时间", value: "0.512", unit: "s", delta: "视频帧差 / 240 fps", metricId: "jump.height", win: "每次", src: "import" },
@@ -1596,7 +1608,7 @@
       S_note("用例 1 可核验", "t_f = 0.500 s → h = 9.81 × 0.25 / 8 = <b>0.30656 m ≈ 30.7 cm</b>。「手动填入」面板 会按此公式实时计算。", "info", 3, { label: "打开手动填入", sheet: "manual" })
     ], { chips: [dataChip()], actions: [{ label: "＋ 记录测试", act: "arc-test-record", primary: true }] });
 
-    page("lab/sprint", "冲刺与变向", "直线 / 变向 / 水平力学表现如何？", "LAB / 冲刺", [
+    page("measure/sprint", "冲刺与变向", "直线 / 变向 / 水平力学表现如何？", "MEASURE / 冲刺", [
       S_metrics([{ label: "10 m 分段", value: "1.68", unit: "s", delta: "直线冲刺 · 分段计时" },
         { label: "5-0-5", value: "2.41", unit: "s", delta: "左右差 3.2%" },
         { label: "触地时间", value: "0.142", unit: "s", delta: "高速摄像 / IMU" },
@@ -1616,7 +1628,7 @@
       S_note("口径声明", "冲刺与变向指标按公开方法独立实现；<b>不还原任何 App 内部实现或专有计算</b>。未标定参数返回「—」。", "", 3)
     ], { chips: [dataChip()] });
 
-    page("lab/screen", "活动度与问卷", "关节活动范围与主观状态如何？", "LAB / 筛查", [
+    page("measure/screen", "活动度与问卷", "关节活动范围与主观状态如何？", "MEASURE / 筛查", [
       S_metrics([{ label: "踝背屈 ROM", value: "38", unit: "°", delta: "左 38° / 右 35°" },
         { label: "Wellness 问卷", value: "4", unit: "项", delta: "睡眠 / 疲劳 / 压力 / 酸痛" },
         { label: "Nordic 断点角", value: "—", delta: "不可计算 · 需视频标记", na: true },
@@ -1636,7 +1648,7 @@
       S_note("主观数据边界", "问卷结果标记 <b>self_reported</b>，不与设备测量合并计算；腘绳肌断点角与扭矩需视频标记后才可计算。", "warn", 3)
     ], { chips: [dataChip()] });
 
-    page("lab/history", "测试历史与对比", "与上次同条件比是进步还是退步？", "LAB / 历史", (function () {
+    page("measure/history", "测试历史与对比", "与上次同条件比是进步还是退步？", "MEASURE / 历史", (function () {
       const J = A.JUMPS || [];
       // 高度优先用服务端落库值；没有落库值才按公式补算，并在「来源」列标明是补算的
       const hOf = j => (j.height !== null && j.height !== undefined) ? j.height : (j.tf ? jumpH(j.tf) : null);
@@ -1669,7 +1681,7 @@
           S_cards("关联页面", "测试 ↔ 分析边界", [
             { icon: "analyze", title: "跳跃表现趋势", sub: "analyze/jump · 只读", route: "analyze/jump" },
             { icon: "analyze", title: "VBT 分析", sub: "analyze/vbt · 只读", route: "analyze/vbt" },
-            { icon: "sliders", title: "标定与动作库", sub: "lab/calibration · 参数版本", route: "lab/calibration" }
+            { icon: "sliders", title: "标定与动作库", sub: "measure/calibration · 参数版本", route: "measure/calibration" }
           ], 1)
         ];
       }
@@ -1689,21 +1701,21 @@
         ]),
         J.length ? S_table("全部测试记录", "CSV 导出供研究与复核 · 末列标明值是服务端落库还是前端补算",
           ["日期", "类型", "高度 cm", "RSI", "方法", "fps", "条件", "来源"], rows, 3)
-          : S_note("还没有任何测试记录", "跳到 <b>lab/vbt</b> 或 <b>lab/jump</b> 录一次采集，" +
+          : S_note("还没有任何测试记录", "跳到 <b>measure/vbt</b> 或 <b>measure/jump</b> 录一次采集，" +
               "或从 CSV/FIT 导入。这一页不预置示例数据——测试历史若是编的，趋势分析就全废了。", "info", 3,
-              { label: "去采集", route: "lab/jump" }),
+              { label: "去采集", route: "measure/jump" }),
         S_note("对比规则", "条件不一致时对比开关置灰并说明原因；<b>不跨条件合并数据</b>。左右不对称需双侧设备数据齐备才计算。" +
           (condKeys.length ? "当前条件：" + condKeys.map(k => k + "×" + conds[k]).join(" · ") : ""), "warn", 2,
           { label: "导出 CSV", route: "analyze/report" }),
         S_cards("关联页面", "测试 ↔ 分析边界", [
           { icon: "analyze", title: "跳跃表现趋势", sub: "analyze/jump · 只读", route: "analyze/jump" },
           { icon: "analyze", title: "VBT 分析", sub: "analyze/vbt · 只读", route: "analyze/vbt" },
-          { icon: "sliders", title: "标定与动作库", sub: "lab/calibration · 参数版本", route: "lab/calibration" }
+          { icon: "sliders", title: "标定与动作库", sub: "measure/calibration · 参数版本", route: "measure/calibration" }
         ], 1)
       ];
     })(), { chips: [dataChip()] });
 
-    page("lab/calibration", "标定与动作库", "计算参数用的是哪一套？", "LAB / 标定", [
+    page("measure/calibration", "标定与动作库", "计算参数用的是哪一套？", "MEASURE / 标定", [
       S_metrics([{ label: "已标定参数", value: state.calibrated ? "5 / 6" : "4 / 6", delta: "变更留版本与时间戳" },
         { label: "V1RM（后蹲）", value: state.calibrated ? "0.30" : "—", unit: state.calibrated ? "m/s" : "", delta: state.calibrated ? "默认标定值" : "未标定 → 1RM 不可计算", na: !state.calibrated },
         { label: "IMU 采样率", value: "200", unit: "Hz", delta: "imu-001 · 已登记" },
@@ -1833,7 +1845,7 @@
             { label: "离线回传队列", value: "3", unit: "条", delta: "device_id + ts_ms 去重" }]),
           S_heat("28 日质量热力日历", "点按日期补录 · 缺测为虚线空位", 2),
           S_table("不可计算清单", "返回原因，不显示 0", ["指标", "原因", "处理"], [
-            ["jump.ppo / FVP", "Sayers / Samozino 系数未标定", "前往 lab/calibration"],
+            ["jump.ppo / FVP", "Sayers / Samozino 系数未标定", "前往 measure/calibration"],
             ["acwr.rolling", L().rolling === null ? "7 日窗口有效天 5/7" : "28 日窗口有效天 26/28（临界）", "以 EWMA 为主口径"],
             ["tm / ts", L().tm === null ? "7 日窗口有效天不足 7" : "已计算", "不可计算时不输出 0 或 ∞"],
             ["tl.tss（跑步课）", "无功率数据", "不回退 TRIMP 冒充"],
@@ -1853,7 +1865,7 @@
       if (l.rolling === null) noCalc.push(["acwr.rolling", "28 日窗口内有效天不足 26 天", "以 EWMA 为主口径"]);
       if (l.tm === null) noCalc.push(["tm 单调性", "7 日窗口有效天不足 7 天（或标准差为 0）", "不可计算时不输出 0 或 ∞"]);
       if (l.ts === null) noCalc.push(["ts 训练压力", "依赖 TM，TM 不可计算", "同上"]);
-      noCalc.push(["jump.ppo / FVP", "Sayers / Samozino 系数未标定", "前往 lab/calibration"]);
+      noCalc.push(["jump.ppo / FVP", "Sayers / Samozino 系数未标定", "前往 measure/calibration"]);
       noCalc.push(["tl.tss / NP / IF", "无功率样本、档案无 FTP", "不回退 TRIMP 冒充"]);
       if (!A.SLEEP || !A.SLEEP.some(s => s.tst !== null)) noCalc.push(["sleep 规律性", "有效夜不足 7 夜", "不插值补齐"]);
 
@@ -1923,7 +1935,7 @@
             { icon: "check", title: "Dynamic Type", sub: "布局重排不截断 · 最小 11px", value: "已支持" },
             { icon: "lock", title: "隐私与同意", sub: "健康数据单独同意 · 可导出 / 可删除", value: "查看", route: "admin/compliance" }
           ], 1),
-          S_note("未标定参数", "采样率、滤波截止、ZUPT 阈值、V1RM、LVP R² 门槛<b>默认留空</b>，不填猜测值；相关指标在此之前返回「不可计算」。", "warn", 3, { label: "前往标定", route: "lab/calibration" })
+          S_note("未标定参数", "采样率、滤波截止、ZUPT 阈值、V1RM、LVP R² 门槛<b>默认留空</b>，不填猜测值；相关指标在此之前返回「不可计算」。", "warn", 3, { label: "前往标定", route: "measure/calibration" })
         ];
       }
       const ME = A.ME;
@@ -1958,7 +1970,7 @@
           { icon: "check", title: "Dynamic Type", sub: "布局重排不截断 · 最小 11px", value: "已支持" },
           { icon: "lock", title: "隐私与同意", sub: "健康数据单独同意 · 可导出 / 可删除", value: "查看", route: "admin/compliance" }
         ], 1),
-        S_note("未标定参数", "采样率、滤波截止、ZUPT 阈值、V1RM、LVP R² 门槛<b>默认留空</b>，不填猜测值；相关指标在此之前返回「不可计算」。", "warn", 3, { label: "前往标定", route: "lab/calibration" })
+        S_note("未标定参数", "采样率、滤波截止、ZUPT 阈值、V1RM、LVP R² 门槛<b>默认留空</b>，不填猜测值；相关指标在此之前返回「不可计算」。", "warn", 3, { label: "前往标定", route: "measure/calibration" })
       ];
     })(), { chips: [dataChip()] });
   })();
@@ -2399,7 +2411,8 @@
     // 「实时 · 1 Hz / 最新更新 18:29:40 / device.sample」配着真实数字出现，会被读成真有数据在推。
     // A2：以 sections0 为基底（首个 hero 已标记 lifted），后续演示占位/告警仍按原逻辑插入。
     let sections = sections0;
-    const LV = state.dbLive ? null : window.ARC_LIVE;
+    // B3：演示占位只在「演示态 + 显式开关」下注入；真库模式永不显示。
+    const LV = (state.dbLive || !state.demoFx) ? null : window.ARC_LIVE;
     // 数据不是「此刻」的、或窗口被截断时，把这件事放在第一屏最上面。
     // 不写在角标里——角标会被忽略，横幅不会。
     if (state.dbStale) {
@@ -2425,14 +2438,14 @@
         "train": ["evlab.status", "bodybattery"],
         "train/session": ["te.aerobic", "evlab.status"],
         "train/plan": ["evlab.status", "evlab.recovery"],
-        "lab": ["evlab.status", "evlab.recovery"],
-        "lab/vbt": ["evlab.status", "te.aerobic"],
+        "measure": ["evlab.status", "evlab.recovery"],
+        "measure/vbt": ["evlab.status", "te.aerobic"],
         "data": ["bodybattery", "sleep.score"],
         "admin/overview": ["evlab.status", "bodybattery"],
         "admin": ["evlab.status", "bodybattery"]
       };
       if (scoreMap[state.route]) sections.push(S_scores(scoreMap[state.route]));
-      if (["data/sources", "data/import", "data/devices", "lab/vbt", "lab/calibration"].indexOf(state.route) >= 0) sections.push(S_fusion());
+      if (["data/sources", "data/import", "data/devices", "measure/vbt", "measure/calibration"].indexOf(state.route) >= 0) sections.push(S_fusion());
     }
     // A2：唯一页头。标题/引导语/动作来自「首个 hero 上提后」的合并结果，不再另起一套。
     content.innerHTML = '<div class="page"><div class="page-head">' +
@@ -2457,6 +2470,17 @@
   }
 
   /* ── 浮层 ────────────────────────────────────────────── */
+  /* C2：「还缺什么」的口径映射。只解释缺什么、去哪补；不补 0、不估算、不合并来源。 */
+  const GAP_INFO = {
+    "acwr.rolling": { why: "7 日 / 28 日窗口内有效训练日不足，rolling 比值不可算。", acts: [["补录训练负荷", "data/import"], ["查看缺测明细", "data/quality"]] },
+    "tm": { why: "7 日窗口有效训练日不足，或每日 TL 标准差为 0——单调性在数学上不可定义。", acts: [["补录训练负荷", "data/import"], ["查看缺测明细", "data/quality"]] },
+    "ts": { why: "TS = 7 日 TL 合计 × TM；TM 不可算时 TS 一并不可算，不用经验值替代。", acts: [["补录训练负荷", "data/import"], ["查看 TM 口径", "data/metrics"]] },
+    "sleep.tst": { why: "近 7 夜睡眠记录不足，规律性（标准差）不可算。", acts: [["查看睡眠数据源", "data/sources"], ["导入睡眠数据", "data/import"]] },
+    "tl.tss": { why: "缺少功率 / 心率原始输入；不回退 TRIMP 冒充 TSS。", acts: [["查看设备通道", "data/devices"], ["查看口径 Registry", "data/metrics"]] },
+    "vbt.lvp": { why: "V1RM 未标定，或回归负荷点不足 / 斜率 ≥ 0 / R² < 0.95。", acts: [["前往标定", "measure/calibration"], ["去做 VBT 采集", "measure/vbt"]] },
+    "jump.ppo": { why: "体重或 Sayers / Samozino 系数未标定。", acts: [["前往标定", "measure/calibration"]] },
+    "hrv.rmssd": { why: "当日没有可用的 HRV 原始样本。", acts: [["查看 HRV 数据源", "data/sources"], ["导入 HRV 数据", "data/import"]] }
+  };
   function metricValue(id) {
     const l = L();
     const map = {
@@ -2510,6 +2534,19 @@
           '<div class="sheet-section-title">原始样本（前几行）</div><div class="table-wrap"><table class="tbl"><thead><tr>' + rawColumns(id).map(c => '<th>' + esc(c) + '</th>').join("") + '</tr></thead><tbody>' + rawSamples(id).map(r => '<tr>' + r.map(c => '<td>' + c + '</td>').join("") + '</tr>').join("") + '</tbody></table></div>',
         footer: foot(closeBtn + '<button class="btn primary" data-act="nav" data-route="data/metrics">查看完整 Registry</button>') };
     }
+    if (t === "gap") {
+      const m = A.METRICS[id] || A.METRICS.ctl;
+      const g = GAP_INFO[id] || { why: "该指标当前没有可用输入。缺测日显示「—」，不补 0、不估算、不跨来源合并。",
+        acts: [["查看缺测明细", "data/quality"], ["查看口径 Registry", "data/metrics"]] };
+      return { title: "还缺什么 · " + m.name, subtitle: "C2 · 不可计算的原因与下一步", small: true,
+        body: '<div class="note warn"><b>「—」不是 0，也不是估算值。</b>指标在输入不足时按口径返回不可计算，避免把占位数字读成真实结果。</div>' +
+          '<div class="sheet-section-title">缺什么</div><dl class="kv"><dt>指标</dt><dd>' + esc(m.name) + '</dd>' +
+          '<dt>当前缺口</dt><dd>' + esc(g.why) + '</dd><dt>口径版本</dt><dd>' + esc(m.version) + '</dd>' +
+          '<dt>有效性规则</dt><dd>' + esc(m.valid) + '</dd></dl>' +
+          '<div class="sheet-section-title">可以做什么</div><div class="list">' +
+          g.acts.map(a => row({ icon: "arrow", title: a[0], sub: a[1], route: a[1] })).join("") + '</div>',
+        footer: foot(closeBtn) };
+    }
     if (t === "rule") {
       const r = A.RULES[id] || A.RULES["R-01"];
       return { title: id + " · " + r.title, subtitle: "O7 规则解释 · 可解释规则，不输出黑盒评分", small: false,
@@ -2549,7 +2586,7 @@
         body: (id ? '<div class="note info">已选协议：<b>' + esc(id) + '</b>。点按下方按钮进入采集页。</div>' : '<div class="note">选择一个协议开始测量；测试记录写入 source 与 quality_flag，<b>不计入 TL 与 ACWR</b>。</div>') +
           '<div class="sheet-section-title">协议</div><div class="protocol-grid">' +
           ["CMJ", "SJ", "DJ 跳深", "RSI 10-5", "VBT 杠铃速度", "5-0-5 变向", "踝背屈 ROM", "Wellness 问卷"].map(x => '<button class="protocol" data-act="sheet" data-sheet="newtest" data-id="' + esc(x) + '">' + esc(x) + '</button>').join("") + '</div>',
-        footer: foot(closeBtn + '<button class="btn primary" data-act="nav" data-route="' + (id && id.indexOf("VBT") >= 0 ? "lab/vbt" : id && id.indexOf("ROM") >= 0 ? "lab/screen" : id && id.indexOf("问卷") >= 0 ? "lab/screen" : id && id.indexOf("变向") >= 0 ? "lab/sprint" : "lab/jump") + '">进入采集</button>') };
+        footer: foot(closeBtn + '<button class="btn primary" data-act="nav" data-route="' + (id && id.indexOf("VBT") >= 0 ? "measure/vbt" : id && id.indexOf("ROM") >= 0 ? "measure/screen" : id && id.indexOf("问卷") >= 0 ? "measure/screen" : id && id.indexOf("变向") >= 0 ? "measure/sprint" : "measure/jump") + '">进入采集</button>') };
     }
     if (t === "window") {
       return { title: "窗口与口径", subtitle: "O6 · 选择后页面原地刷新并更新标签", small: true,
@@ -2568,9 +2605,15 @@
         '<div class="form-row"><label>分析窗口</label><select data-act="param" data-key="window">' + [7, 28, 42, 90].map(v => '<option value="' + v + '" ' + (curWindow() === v ? "selected" : "") + '>' + v + ' 日</option>').join("") + '</select></div>' +
         '<div class="form-row"><label>ACWR 主口径</label><select data-act="param" data-key="acwr">' + [["ewma", "EWMA（推荐）"], ["rolling", "rolling 7/28"]].map(v => '<option value="' + v[0] + '" ' + (state.params.acwr === v[0] ? "selected" : "") + '>' + v[1] + '</option>').join("") + '</select></div>';
       if (demoMode()) {
+        // B3：演示占位默认关闭；这里给出显式开关，打开后才出现 1 Hz 假流与对标评分。
         body += '<div class="sheet-section-title">演示控制</div>' +
-          '<div class="list">' + row({ icon: "chart", title: "对标评分与阈值", sub: "公开口径 · DEMO 占位", sheet: "scores" }) + '</div>' +
-          '<button class="btn" style="margin-top:8px" data-act="live-toggle">暂停 / 继续实时 · 1 Hz 推流</button>';
+          '<div class="note info">演示占位（实时 · 1 Hz、对标评分、数据融合示意）<b>默认关闭</b>，以免占位数字被误读为真实数据。真库模式下此开关不生效，永远不会注入。</div>' +
+          '<button class="btn ' + (state.demoFx ? "primary" : "") + '" style="margin-top:8px" data-act="demo-fx-toggle">' +
+          (state.demoFx ? "关闭演示占位" : "开启演示占位") + '</button>';
+        if (state.demoFx) {
+          body += '<div class="list" style="margin-top:8px">' + row({ icon: "chart", title: "对标评分与阈值", sub: "公开口径 · DEMO 占位", sheet: "scores" }) + '</div>' +
+            '<button class="btn" style="margin-top:8px" data-act="live-toggle">暂停 / 继续实时 · 1 Hz 推流</button>';
+        }
       }
       if (state.workspace === "admin") {
         body += '<div class="sheet-section-title">视角</div><div class="note info">当前角色：<b>' + esc(roleLabel(state.role)) + '</b>。角色由组织成员关系决定，可在下方切换演示视角。</div>' +
@@ -2600,14 +2643,14 @@
   }
 
   const MANUAL = {
-    jump: { label: "跳跃测试", route: "lab/jump", fields: [
+    jump: { label: "跳跃测试", route: "measure/jump", fields: [
       { k: "type", label: "协议", type: "select", options: ["CMJ", "SJ", "DJ", "RSI 10-5"], v: "CMJ" },
       { k: "tf", label: "腾空时间 t_f (s)", type: "number", v: "0.500" },
       { k: "tc", label: "接触时间 t_c (s) · DJ 必填", type: "number", v: "0.180" },
       { k: "fps", label: "帧率 fps（视频法必填）", type: "number", v: "" },
       { k: "cond", label: "测试条件（地面 / 鞋 / 时段）", type: "text", v: "木地板 / 室内 / 09:10" }
     ] },
-    vbt: { label: "VBT 组", route: "lab/vbt", fields: [
+    vbt: { label: "VBT 组", route: "measure/vbt", fields: [
       { k: "exercise", label: "动作", type: "select", options: ["back_squat", "bench_press", "deadlift"], v: "back_squat" },
       { k: "load", label: "负荷 load_kg", type: "number", v: "80" },
       { k: "rep", label: "rep_index", type: "number", v: "6" },
@@ -2862,6 +2905,12 @@
       // 真实模式下没有假 SSE：这两个按钮改为「从库里同步一次」
       if (window.ARC_DB) window.ARC_DB.reload();
       return;
+    }
+    if (a === "demo-fx-toggle") {
+      // B3：显式开关，切换后立即重绘当前页（ sheet 保持打开，便于连续操作）
+      state.demoFx = !state.demoFx;
+      toast(state.demoFx ? "已开启演示占位 · 1 Hz 与对标评分仅作演示" : "已关闭演示占位", "info");
+      renderAll(); renderOverlay(); return;
     }
     if (a === "live-toggle") { if (window.ARC_LIVE) window.ARC_LIVE.toggleLive(); return; }
     if (a === "live-refresh") { if (window.ARC_LIVE) { window.ARC_LIVE.refresh(); toast("已触发即时刷新 · 骨架加载中，全部卡片同步切版"); } return; }

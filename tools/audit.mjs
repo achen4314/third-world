@@ -15,6 +15,8 @@ const script = String.raw`
   const R=[]; const add=(cat,name,ok,detail)=>R.push({cat,name,ok:!!ok,detail:String(detail).slice(0,140)});
   const wait=()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
   const d=window.ARC_DEBUG,L=window.ARC_LIVE,A=window.ARC;
+  // B3：演示占位默认关闭。审计要覆盖 1 Hz / 对标评分 / 融合机制，先显式打开开关再渲染。
+  d.state.demoFx=true; d.navigate('today');
   const errs=[]; window.addEventListener('error',e=>errs.push(e.message));
   const near=(a,b,e)=>Math.abs(a-b)<(e||1e-6);
 

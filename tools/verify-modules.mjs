@@ -53,7 +53,7 @@ const app = read("app.js");
 const ui = read("ui-flows.js");
 const trainStart = app.indexOf('page("train"');
 const analyzeStart = app.indexOf('page("analyze"');
-const labStart = app.indexOf('page("lab"');
+const labStart = app.indexOf('page("measure"');
 const dataStart = app.indexOf('page("data"');
 const trainSrc = app.slice(trainStart, analyzeStart);
 const labSrc = app.slice(labStart, dataStart);
@@ -61,7 +61,7 @@ const labSrc = app.slice(labStart, dataStart);
 const TRAIN_FORBIDDEN = [
   ['sheet: "newtest"', "训练页不得打开测试协议选择"],
   ["S_protocols(", "训练页不得嵌入测试协议网格"],
-  ['route: "lab/', "训练页不得把测试采集页作为功能入口"],
+  ['route: "measure/', "训练页不得把测量采集页作为功能入口"],
   ["chartLoadTrend(", "训练页不得画 CTL/ATL/TSB 趋势"]
 ];
 for (const [needle, why] of TRAIN_FORBIDDEN) {
@@ -88,11 +88,11 @@ add("模块分离", "测试记录说明不计入 TL / ACWR",
 
 /* 3. 两个模块各自包含的页面清单 */
 const trainPages = [...trainSrc.matchAll(/page\("(train[^"]*)",\s*"([^"]+)"/g)].map(m => m[1] + " · " + m[2]);
-const labPages = [...labSrc.matchAll(/page\("(lab[^"]*)",\s*"([^"]+)"/g)].map(m => m[1] + " · " + m[2]);
+const labPages = [...labSrc.matchAll(/page\("(measure[^"]*)",\s*"([^"]+)"/g)].map(m => m[1] + " · " + m[2]);
 add("模块清单", "训练模块页面数", trainPages.length >= 6, trainPages.length + " 页", "≥ 6");
 add("模块清单", "测试模块页面数", labPages.length >= 6, labPages.length + " 页", "≥ 6");
 add("模块清单", "测试模块含跳跃 / VBT / 冲刺 / 筛查 / 历史 / 标定",
-  ["lab/jump", "lab/vbt", "lab/sprint", "lab/screen", "lab/history", "lab/calibration"].every(r => labSrc.includes('page("' + r + '"')),
+  ["measure/jump", "measure/vbt", "measure/sprint", "measure/screen", "measure/history", "measure/calibration"].every(r => labSrc.includes('page("' + r + '"')),
   "6 类齐备", "6 类齐备");
 add("模块清单", "测试协议常量仍完整（4 组）",
   (A.TEST_PROTOCOLS || []).length === 4, (A.TEST_PROTOCOLS || []).length + " 组", "4 组");

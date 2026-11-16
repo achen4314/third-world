@@ -211,12 +211,13 @@
       { id: "plan", label: "周期计划" }, { id: "library", label: "训练方案库" },
       { id: "goals", label: "比赛与目标" }
     ] },
+    // B1：按「我要做什么」归组。VBT / 跳跃的结果页不再建同名导航项，
+    // 只在「测量」保留采集入口；结果从分析页的卡片进入（analyze/vbt、analyze/jump）。
     { id: "analyze", label: "分析", icon: "analyze", children: [
       { id: "load", label: "负荷与周期" }, { id: "recovery", label: "恢复与睡眠" },
-      { id: "endurance", label: "有氧与功率" }, { id: "vbt", label: "VBT 分析" },
-      { id: "jump", label: "跳跃表现" }, { id: "report", label: "报告与导出" }
+      { id: "endurance", label: "有氧与功率" }, { id: "report", label: "报告与导出" }
     ] },
-    { id: "lab", label: "测试", icon: "lab", children: [
+    { id: "measure", label: "测量", icon: "lab", children: [
       { id: "vbt", label: "VBT 采集" }, { id: "jump", label: "跳跃采集" },
       { id: "sprint", label: "冲刺与变向" }, { id: "screen", label: "活动度与问卷" },
       { id: "history", label: "测试历史" }, { id: "calibration", label: "标定与动作库" }
@@ -271,7 +272,7 @@
     rows: [
       { module: "今日 / 训练（本人）", v: ["full", "full", "full", "limited", "limited", "none", "none"], key: "today" },
       { module: "分析（成员级明细）", v: ["full", "full", "full", "limited", "full", "none", "none"], key: "analyze" },
-      { module: "测试采集与录入", v: ["full", "full", "full", "limited", "none", "none", "none"], key: "lab" },
+      { module: "测量采集与录入", v: ["full", "full", "full", "limited", "none", "none", "none"], key: "measure" },
       { module: "设备配对 / 解绑（本人）", v: ["full", "limited", "limited", "none", "none", "none", "none"], key: "data" },
       { module: "设备群 / 批量导入", v: ["none", "none", "limited", "none", "none", "full", "none"], key: "fleet" },
       { module: "周期计划编辑 / 下发", v: ["none", "full", "full", "none", "none", "none", "none"], key: "plan" },
@@ -287,7 +288,7 @@
 
   const BOUNDARIES = [
     ["分析 ↔ 数据看板", "analyze/* 单运动员、长周期、可下钻到原始样本、可切换口径", "admin/overview 多运动员聚合、只读、最多下钻到成员页"],
-    ["测试 ↔ 分析", "lab/* 采集与写入、实时反馈、设备/录入通道", "analyze/* 只读再计算与对比，不提供录入控件"],
+    ["测试 ↔ 分析", "measure/* 采集与写入、实时反馈、设备/录入通道", "analyze/* 只读再计算与对比，不提供录入控件"],
     ["今日 ↔ 其余", "today 只给一个结论 + 三个入口", "其余页承载全部细节与图表"],
     ["数据（个人）↔ 管理（组织）", "data/* 本人设备、本人授权、本人缺测", "admin/fleet 设备资产、批量任务、凭据与保留策略"],
     ["Registry ↔ 分析", "data/metrics 是公式与版本唯一定义源", "分析页只引用，不重新定义公式"],
