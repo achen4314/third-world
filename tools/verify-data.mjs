@@ -193,8 +193,11 @@ try {
           select coalesce(o.timezone,'Asia/Shanghai') into v_tz
           from public.athletes a join public.orgs o on o.id=a.org_id
           where a.id = '${ath.id}';
+          -- 0013 起：今日状态量由 arc_daily_summary 只读 fallback 提供，库里本来就
+          -- 不写「今天」的行。独立重算只比到库内已有的最后日期，避免把 fallback
+          -- 设计误判为「该有为空」。
           select min((started_at at time zone v_tz)::date),
-                 greatest(max((started_at at time zone v_tz)::date), (now() at time zone v_tz)::date)
+                 (select max(metric_date) from public.daily_metrics where athlete_id='${ath.id}')
             into v_start, v_to
           from public.activities where athlete_id = '${ath.id}';
           for d in select generate_series(v_start, v_to, interval '1 day')::date loop
@@ -254,7 +257,10 @@ try {
     // B2 生产函数幂等（事务内执行后回滚）
     const idem = await inRollback(async () => {
       const before = await q(`select metric_date, metric_id, value from public.daily_metrics where athlete_id=$1 order by 1,2`, [ath.id]);
-      await client.query(`select public.arc_recompute_metrics($1, $2)`, [ath.id, String((await one(`select max(metric_date) d from public.daily_metrics`)).d).slice(0, 10)]);
+      // 必须用「该运动员自己的」最后日期：用全库 max 会把别人更晚的日期套过来，
+      // 导致本运动员的休息日被补算，被误报为「新增 4 行」。
+      const ownLast = String((await one(`select max(metric_date) d from public.daily_metrics where athlete_id=$1`, [ath.id])).d).slice(0, 10);
+      await client.query(`select public.arc_recompute_metrics($1, $2)`, [ath.id, ownLast]);
       const after = await q(`select metric_date, metric_id, value from public.daily_metrics where athlete_id=$1 order by 1,2`, [ath.id]);
       const key = (r) => `${String(r.metric_date).slice(0, 10)}|${r.metric_id}`;
       const m = new Map(after.map(r => [key(r), String(r.value)]));
@@ -379,13 +385,17 @@ try {
     const numOf = (v) => (v === null || v === undefined ? null : Number(v));
     const same = (a, b) => (a === null && b === null) || (a !== null && b !== null && Math.abs(Number(a) - Number(b)) < 0.002);
     const load = s.load || {};
-    const acwrOk = same(numOf(load.acwr), numOf(rpcCheck.db.acwr));
-    const atlOk = same(numOf(load.atl), numOf(rpcCheck.db.atl));
-    const ctlOk = same(numOf(load.ctl), numOf(rpcCheck.db.ctl));
+    // 0013 起：今日无训练 → 库里不写当日行，RPC 走只读 fallback。
+    // 此时「RPC 有值、表无值」是设计而非不一致；fallback 数值本身由 0013 自检校验。
+    const dbHasToday = numOf(rpcCheck.db.ctl) !== null || numOf(rpcCheck.db.acwr) !== null;
+    const fallbackMode = !dbHasToday;
+    const acwrOk = fallbackMode ? numOf(load.acwr) !== null : same(numOf(load.acwr), numOf(rpcCheck.db.acwr));
+    const atlOk  = fallbackMode ? numOf(load.atl)  !== null : same(numOf(load.atl),  numOf(rpcCheck.db.atl));
+    const ctlOk  = fallbackMode ? numOf(load.ctl)  !== null : same(numOf(load.ctl),  numOf(rpcCheck.db.ctl));
     const readyOk = same(numOf((s.readiness || {}).score), numOf(rpcCheck.db.ready));
     add("C 同步", "摘要 RPC 与指标表对账", acwrOk && atlOk && ctlOk ? true : "warn",
-      `${rpcCheck.today} · RPC acwr=${numOf(load.acwr)} atl=${numOf(load.atl)} ctl=${numOf(load.ctl)} 就绪=${numOf((s.readiness || {}).score)} / 表 acwr=${numOf(rpcCheck.db.acwr)} atl=${numOf(rpcCheck.db.atl)} 就绪=${numOf(rpcCheck.db.ready)}`,
-      "两侧一致", readyOk ? null : "就绪度两条路径口径不同，需核对 rules 权重是否取到同一版本");
+      `${rpcCheck.today} · ${fallbackMode ? "库内当日无行（P0-1 只读 fallback，不写库）" : "库内当日有行"} · RPC acwr=${numOf(load.acwr)} atl=${numOf(load.atl)} ctl=${numOf(load.ctl)} 就绪=${numOf((s.readiness || {}).score)} / 表 acwr=${numOf(rpcCheck.db.acwr)} atl=${numOf(rpcCheck.db.atl)} 就绪=${numOf(rpcCheck.db.ready)}`,
+      "两侧一致或 fallback 有值", readyOk ? null : "就绪度两条路径口径不同，需核对 rules 权重是否取到同一版本");
 
     // 周计划：日期落在最近 7 天窗口、同日不重复、状态合法
     const week = await inRollback(async () => {

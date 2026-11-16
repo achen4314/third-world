@@ -99,7 +99,7 @@
         '<span style="width:18px;flex:0 0 18px;color:var(--text-3);font-size:12px">' + (i + 1) + '</span>' +
         typeSelectHtml(i, s.type) +
         '<input id="sDur' + i + '" type="number" min="1" max="600" value="' + esc(s.dur) + '" title="分钟" style="width:66px;flex:0 0 66px">' +
-        '<input id="sRpe' + i + '" type="number" min="0" max="10" step="0.5" value="' + esc(s.rpe) + '" title="RPE 0–10" style="width:66px;flex:0 0 66px">' +
+        '<input id="sRpe' + i + '" type="number" min="1" max="10" step="0.5" value="' + esc(s.rpe) + '" title="RPE 1–10" style="width:66px;flex:0 0 66px">' +
         '<button data-u="seg-del" data-i="' + i + '" title="删除这一段" style="flex:0 0 28px;border:1px solid var(--separator);background:transparent;border-radius:8px">✕</button>' +
         '</div>';
     }).join("");
@@ -651,9 +651,9 @@
         var segs = collectSegments();
         if (!segs.length) throw new Error("至少添加一段训练");
         var bad = segs.filter(function (x) {
-          return !(x.dur > 0) || x.dur > 600 || !(x.rpe >= 0) || x.rpe > 10;
+          return !(x.dur > 0) || x.dur > 600 || !(x.rpe >= 1) || x.rpe > 10;
         });
-        if (bad.length) throw new Error("每段的时长需在 1–600 分钟、RPE 需在 0–10 之间");
+        if (bad.length) throw new Error("每段的时长需在 1–600 分钟、RPE 需在 1–10 之间（RPE=0 会写成零负荷，本系统不接受）");
         var m = segSummary(segs);
         if (m.dur > 600) throw new Error("单次训练总时长不能超过 600 分钟");
         var main = segs.slice().sort(function (a, b) { return b.dur - a.dur; })[0];

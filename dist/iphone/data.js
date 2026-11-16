@@ -172,7 +172,7 @@
     },
     "tl.srpe": {
       name: "单次训练负荷 TL（sRPE）", short: "TL sRPE",
-      formula: "TL = sRPE(0–10) × 时长(min)", window: "单次",
+      formula: "TL = sRPE(1–10) × 时长(min)", window: "单次",
       inputs: "主观 RPE、时长", evidence: "E6 (Foster 2001)", version: "v1.0",
       valid: "RPE 缺失时不可计算；一次只选一种 TL 口径并固定展示",
       note: "三口径（TRIMP / sRPE / TSS）不混用；无功率数据不得用 TSS。"

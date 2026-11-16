@@ -29,6 +29,7 @@
     "q": "node tools/q.mjs",
     "set:key": "node tools/set-key.mjs",
     "db:0012": "node tools/apply-sql.mjs supabase/migrations/20261114000012_rest_day_decay.sql",
+    "db:0013": "node tools/apply-sql.mjs supabase/migrations/20261114000013_fallback_and_idempotency.sql",
     "admin:console": "node deploy/admin-console.mjs",
     "build:platforms": "node build/platforms.mjs",
     "verify:data": "node tools/verify-data.mjs",

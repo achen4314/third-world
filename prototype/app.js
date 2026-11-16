@@ -97,11 +97,20 @@
         atl = atl === null ? v : atl + (v - atl) / 7;
         acu = acu === null ? v : acu + 0.25 * (v - acu);
         chr = chr === null ? v : chr + 0.069 * (v - chr);
+      } else {
+        // 休息日：状态量按 0 负荷推进，与服务端 0012 / 0013 同一组系数。
+        // 演示/未登录路径此前直接延续前一日，连休后 ATL 不降、TSB 不回升。
+        ctl = ctl === null ? null : ctl - ctl / 42;
+        atl = atl === null ? null : atl - atl / 7;
+        acu = acu === null ? null : acu - 0.25 * acu;
+        chr = chr === null ? null : chr - 0.069 * chr;
       }
       const w7 = stats(tl.slice(Math.max(0, i - 6), i + 1));
       const w28 = stats(tl.slice(Math.max(0, i - 27), i + 1));
+      // rolling / tm / ts 的口径待用户确认后再动，此处保持演示现状。
       const rolling = (i >= 27 && w7.valid === 7 && w28.valid >= 26 && w28.mean > 0) ? w7.mean / w28.mean : null;
-      const ewma = (acu !== null && chr !== null && chr > 0 && w7.valid >= 5) ? acu / chr : null;
+      // EWMA 门槛对齐服务端：只要求 chr > 0，不再额外要求 w7.valid >= 5。
+      const ewma = (acu !== null && chr !== null && chr > 0) ? acu / chr : null;
       const tm = (w7.valid === 7 && w7.sd > 0) ? w7.mean / w7.sd : null;
       const ts = (tm !== null && w7.valid === 7) ? w7.sum * tm : null;
       rows.push({ i, date: A.DATES[i], tl: v, ctl, atl, tsb, rolling, ewma, tm, ts, v7: w7.valid, v28: w28.valid, mean7: w7.mean, sum7: w7.sum });
@@ -131,7 +140,12 @@
   }
   const lvpPts = A.VBT_SETS.map(s => ({ x: s.load, y: s.mpv }));
   const LVP = regression(lvpPts);
-  function oneRM() { return state.calibrated ? (V1RM - LVP.b) / LVP.a : null; }
+  // LVP 的 R² 门槛（0.95）与 V1RM 标定是并列硬条件：缺任一都不输出 1RM。
+  // 文案在 lab/calibration 与 metric-registry 均已声明 0.95，此前代码只查了 calibrated。
+  function oneRM() {
+    return state.calibrated && LVP.r2 !== null && LVP.r2 >= 0.95 && LVP.a !== 0
+      ? (V1RM - LVP.b) / LVP.a : null;
+  }
   function jumpH(tf) { return A.G * tf * tf / 8; }
   function jumpRSI(tf, tc) { return tc > 0 ? jumpH(tf) / tc : null; }
   function fmt(v, d) {
@@ -711,7 +725,7 @@
       S_hero(Object.assign({}, HERO, {
         actions: [{ label: "查看依据", sheet: "rule", id: "R-01" }, { label: "应用为周期块", route: "train/plan", primary: true }] })),
       S_metrics([
-        { label: "负荷 · ACWR(EWMA)", value: fmt(l.ewma, 2), delta: "急性 / 慢性负荷比 · 28 日", metricId: "acwr.ewma", win: "EWMA", src: "device", go: "analyze/load" },
+        { label: "负荷 · ACWR(EWMA)", value: fmt(l.ewma, 2), delta: "急性 / 慢性负荷比 · EWMA(7/28)", metricId: "acwr.ewma", win: "EWMA", src: "device", go: "analyze/load" },
         { label: "恢复 · HRV", value: TODAY.hrv, unit: "ms", delta: TODAY.hrvNote, metricId: "hrv.rmssd", win: "28 日", src: "device", go: "analyze/recovery" },
         { label: "今日计划", value: TODAY.planCount, unit: "课", delta: TODAY.planText, go: "train/session" }
       ], 3),
@@ -792,7 +806,7 @@
             { drillId: "tl.srpe", legend: [{ name: "心率", color: "var(--red)" }], note: "样本级下钻在指标口径 Sheet 内提供，不在此页堆叠表格。" }),
           S_kv("本课计算口径", "每个值都能回答四问", [
             ["TL 方法", "<b>sRPE v1.0</b> · TL = sRPE × 时长（分钟）"],
-            ["公式", "<span class=\"formula\">TL = sRPE(0–10) × 时长(min) = 7 × 68 ≈ 476 → 归一为 96</span>"],
+            ["公式", "<span class=\"formula\">TL = sRPE(1–10) × 时长(min) = 7 × 68 ≈ 476 → 归一为 96</span>"],
             ["输入", "RPE=7（manual）· 时长 68 min（device）· HR 时序（device）"],
             ["证据", "E6 (Foster 2001) · E7 (Allen & Coggan)"]
           ], 1),
@@ -829,7 +843,7 @@
         ], 1),
         S_kv("本课计算口径", "每个值都能回答四问", [
           ["TL 方法", "<b>sRPE</b> · TL = sRPE × 时长（分钟）"],
-          ["公式", "<span class=\"formula\">TL = sRPE(0–10) × 时长(min)</span>" + (S0.rpe && S0.durMin ? " = " + S0.rpe + " × " + S0.durMin + " = " + (S0.rpe * S0.durMin) : "")],
+          ["公式", "<span class=\"formula\">TL = sRPE(1–10) × 时长(min)</span>" + (S0.rpe && S0.durMin ? " = " + S0.rpe + " × " + S0.durMin + " = " + (S0.rpe * S0.durMin) : "")],
           ["输入", "RPE=" + (S0.rpe || "—") + "（" + (SRC[S0.src] || "—") + "）· 时长 " + (S0.durMin === null ? "—" : S0.durMin + " min")],
           ["证据", "E6 (Foster 2001) · E7 (Allen & Coggan)"]
         ], 1),
@@ -1280,17 +1294,17 @@
             { label: "最佳 MPV", value: "0.98", unit: "m/s", delta: "40 kg · 后蹲", metricId: "vbt.mcv", win: "每次重复", src: "import" },
             { label: "组内速度损失", value: "24.3", unit: "%", delta: "120 kg · 阈值 20% 可配置", metricId: "vbt.vl", win: "每组", src: "import" },
             { label: "LVP 回归 R²", value: fmt(LVP.r2, 3), delta: "V = a·kg + b · 5 组负荷", metricId: "vbt.lvp", win: "一次测试", src: "import" },
-            { label: "1RM 估计", value: oneRM() === null ? "—" : fmt(oneRM(), 1), unit: oneRM() === null ? "" : "kg", delta: oneRM() === null ? "不可计算 · V1RM 未标定" : "V1RM 0.30 m/s · 已标定", metricId: "vbt.lvp", win: "一次测试", src: "import", na: oneRM() === null }
+            { label: "1RM 估计", value: oneRM() === null ? "—" : fmt(oneRM(), 1), unit: oneRM() === null ? "" : "kg", delta: oneRM() === null ? "不可计算 · 未标定或 R² < 0.95" : "V1RM 0.30 m/s · R² ≥ 0.95", metricId: "vbt.lvp", win: "一次测试", src: "import", na: oneRM() === null }
           ]),
           S_chart("负荷-速度剖面 LVP", "散点为各组 MPV；直线为线性回归；R² 与 1RM 估计可下钻", { kind: "scatter", points: lvpPts, reg: LVP, oneRM: oneRM() }, 2,
-            { drillId: "vbt.lvp", note: "V1RM 阈值与 LVP 的 R² 门槛均为配置项；未标定前 1RM 显示「—」，不猜测系数。" }),
+            { drillId: "vbt.lvp", note: "V1RM 阈值与 LVP 的 R² 门槛（0.95）均为硬条件；未标定或 R² 低于门槛时 1RM 显示「—」，不猜测系数。" }),
           S_chart("速度损失 VL% 分布", "10 / 20 / 30% 仅作可配置阈值，不设为事实", chartVL(), 1, { drillId: "vbt.vl" }),
           S_table("本次 VBT 测试各组", "source=import · 与 manual 录入互斥筛选", ["负荷 kg", "MPV m/s", "MCV m/s", "PV m/s", "VL %", "功率 W（近似）", "口径"], A.VBT_SETS.map(s => [
             esc(s.load), s.mpv.toFixed(2), s.mcv.toFixed(2), s.pv.toFixed(2), s.vl.toFixed(1), esc(s.p), "P ≈ m·g·v"
           ]), 3, { note: "功率使用等速近似口径，已在结果标注；精确式 P=F·v 需加速度样本。" }),
           S_note(oneRM() === null ? "1RM 当前不可计算" : "1RM 已计算", oneRM() === null
-            ? "V1RM 速度阈值属于<b>需真机标定</b>的参数，配置留空时相关指标返回「不可计算」，不硬编码猜测值。可在 <b>lab/calibration</b> 写入标定值后即时看到结果变化。"
-            : "已使用默认标定值 V1RM = 0.30 m/s，结果 = (0.30 − b) / a = <b>" + fmt(oneRM(), 1) + " kg</b>。", oneRM() === null ? "warn" : "info", 3,
+            ? "1RM 需同时满足 <b>V1RM 已标定</b> 且 <b>LVP 回归 R² ≥ 0.95</b>（当前 R² = " + fmt(LVP.r2, 3) + "）。任一条件不满足都返回「不可计算」，不用经验系数硬凑。可在 <b>lab/calibration</b> 写入标定值。"
+            : "已使用默认标定值 V1RM = 0.30 m/s，R² = " + fmt(LVP.r2, 3) + " ≥ 0.95，结果 = (0.30 − b) / a = <b>" + fmt(oneRM(), 1) + " kg</b>。", oneRM() === null ? "warn" : "info", 3,
             { label: oneRM() === null ? "前往标定" : "查看标定配置", route: "lab/calibration" })
         ];
       }
@@ -1312,7 +1326,10 @@
       const best = sets.slice().sort((a, b) => b.mpv - a.mpv)[0];
       const vlMax = sets.reduce((m, s) => (s.vl !== null && s.vl > m ? s.vl : m), 0);
       const reg = pf && pf.ok ? { a: Number(pf.slope), b: Number(pf.intercept), r2: Number(pf.r2) } : null;
-      const oneRMv = pf && pf.ok && pf.load_1rm != null ? Number(pf.load_1rm) : null;
+      // 前端同样执行 R² 门槛（0.95），与 lab/calibration 及 registry 声明一致；
+      // 服务端 arc_vbt_profile 返回 r2 供判断，阈值本身的口径修订待用户确认。
+      const oneRMv = pf && pf.ok && pf.r2 != null && Number(pf.r2) >= 0.95 && pf.load_1rm != null
+        ? Number(pf.load_1rm) : null;
       const pts = sets.map(s => ({ x: s.load, y: s.mpv }));
       const exName = (A.VBT_SESSION && A.VBT_SESSION.exercise) || "本次测试";
 
@@ -1321,12 +1338,12 @@
         { label: "最佳 MPV", value: fmt(best.mpv, 2), unit: "m/s", delta: best.load + " kg · " + exName, metricId: "vbt.mcv", win: "每次重复", src: "import" },
         { label: "组内速度损失", value: vlMax ? fmt(vlMax, 1) : "—", unit: vlMax ? "%" : "", delta: "最大组 · 阈值 " + ((A.RULE_PACK && A.RULE_PACK.payload.vbt && A.RULE_PACK.payload.vbt.vl_warn_pct) || 20) + "%", metricId: "vbt.vl", win: "每组", src: "import" },
         { label: "LVP 回归 R²", value: reg ? fmt(reg.r2, 3) : "—", delta: reg ? sets.length + " 个负荷点 · V = a·kg + b" : "拟合未成立", metricId: "vbt.lvp", win: "一次测试", src: "import", na: !reg },
-        { label: "1RM 估计", value: oneRMv === null ? "—" : fmt(oneRMv, 1), unit: oneRMv === null ? "" : "kg", delta: oneRMv === null ? "不可计算 · 数据不足或速度不随负荷下降" : "V1RM " + ((A.RULE_PACK && A.RULE_PACK.payload.vbt && A.RULE_PACK.payload.vbt.velocity_1rm) || 0.3) + " m/s · 服务端外推", metricId: "vbt.lvp", win: "一次测试", src: "import", na: oneRMv === null }
+        { label: "1RM 估计", value: oneRMv === null ? "—" : fmt(oneRMv, 1), unit: oneRMv === null ? "" : "kg", delta: oneRMv === null ? "不可计算 · 数据不足 / 斜率≥0 / R²<0.95" : "V1RM " + ((A.RULE_PACK && A.RULE_PACK.payload.vbt && A.RULE_PACK.payload.vbt.velocity_1rm) || 0.3) + " m/s · 服务端外推", metricId: "vbt.lvp", win: "一次测试", src: "import", na: oneRMv === null }
       ]));
 
       out.push(reg
         ? S_chart("负荷-速度剖面 LVP", "散点为各组 MPV；直线由服务端 regr_slope 拟合", { kind: "scatter", points: pts, reg: reg, oneRM: oneRMv || 0 }, 2,
-            { drillId: "vbt.lvp", note: "1RM 为外推值，超出实测负荷上限时仅供参考；斜率 ≥ 0 时直接判为不可用，不出数。" })
+            { drillId: "vbt.lvp", note: "1RM 需 R² ≥ 0.95 且斜率 < 0；为外推值，超出实测负荷上限时仅供参考。" })
         : S_note("LVP 拟合未成立", (pf && pf.reason) || "负荷点不足或速度与负荷不呈负相关，因此不输出 1RM 估算。", "warn", 2));
 
       out.push(S_chart("速度损失 VL% 分布", "每组末次相对最快一次的速度下降", {
@@ -1340,7 +1357,7 @@
 
       out.push(S_note(oneRMv === null ? "1RM 当前不可计算" : "1RM 已计算",
         oneRMv === null
-          ? "1RM 需要「速度随负荷单调下降」且至少 3 个负荷点。条件不满足时返回「不可计算」，不用经验系数硬凑。"
+          ? "1RM 需要至少 3 个负荷点、速度随负荷单调下降（斜率 < 0），且回归 R² ≥ 0.95。条件不满足时返回「不可计算」，不用经验系数硬凑。"
           : "V1RM " + ((A.RULE_PACK && A.RULE_PACK.payload.vbt && A.RULE_PACK.payload.vbt.velocity_1rm) || 0.3) + " m/s 来自生效规则版本；结果 = (V1RM − b) / a = <b>" + fmt(oneRMv, 1) + " kg</b>（外推）。",
         oneRMv === null ? "warn" : "info", 3, { label: "查看规则版本", route: "admin/rules" }));
 
