@@ -200,13 +200,17 @@ try {
     `tl=${byDay[restDay]?.["tl.srpe"]}`);
   check("Day1 TL = 100", byDay[dayA]?.["tl.srpe"] === 100, `实际 ${byDay[dayA]?.["tl.srpe"]}`);
   check("Day2 TL = 60（当天单独聚合）", byDay[dayB]?.["tl.srpe"] === 60, `实际 ${byDay[dayB]?.["tl.srpe"]}`);
-  const expCtl1 = 100;
-  const expCtl2 = 100 + (60 - 100) / 42;
-  check("Day1 CTL = TL", Math.abs(byDay[dayA].ctl - expCtl1) < 0.01, `实际 ${byDay[dayA].ctl}`);
+  // 0014 口径：EWMA 四个状态量从 0 起步，首日 CTL=TL/42、ATL=TL/7。
+  const expCtl1 = 100 / 42;
+  const expAtl1 = 100 / 7;
+  const expCtl2 = expCtl1 + (60 - expCtl1) / 42;
+  check("Day1 CTL = TL/42（EWMA 从 0 起步）", Math.abs(byDay[dayA].ctl - expCtl1) < 0.01, `实际 ${byDay[dayA].ctl}`);
+  check("Day1 ATL = TL/7（EWMA 从 0 起步）", Math.abs(byDay[dayA].atl - expAtl1) < 0.01, `实际 ${byDay[dayA].atl}`);
   check("Day2 CTL 按 λ=1/42 递推", Math.abs(byDay[dayB].ctl - expCtl2) < 0.05,
     `期望 ${expCtl2.toFixed(4)} 实际 ${byDay[dayB].ctl}`);
-  const expAcu2 = 100 + 0.25 * (60 - 100);
-  const expChr2 = 100 + 0.069 * (60 - 100);
+  const expAcu1 = 0.25 * 100, expChr1 = 0.069 * 100;
+  const expAcu2 = expAcu1 + 0.25 * (60 - expAcu1);
+  const expChr2 = expChr1 + 0.069 * (60 - expChr1);
   check("Day2 ACWR(EWMA) 与 2/(7+1)、2/(28+1) 一致",
     Math.abs(byDay[dayB]["acwr.ewma"] - expAcu2 / expChr2) < 0.005,
     `实际 ${byDay[dayB]["acwr.ewma"]} 期望 ${(expAcu2 / expChr2).toFixed(4)}`);

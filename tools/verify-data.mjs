@@ -188,6 +188,7 @@ try {
           v_tz text; v_start date; v_to date; d date;
           v_cnt int; v_sum numeric; v_tl numeric;
           v_ctl numeric; v_atl numeric; v_acu numeric; v_chr numeric;
+          v_c0 numeric; v_a0 numeric; v_u0 numeric; v_h0 numeric;
           v_pctl numeric; v_patl numeric;
         begin
           select coalesce(o.timezone,'Asia/Shanghai') into v_tz
@@ -208,10 +209,13 @@ try {
             v_pctl := v_ctl; v_patl := v_atl;
             if v_cnt > 0 then
               v_tl := v_sum;
-              v_ctl := case when v_ctl is null then v_tl else v_ctl + (v_tl - v_ctl)/42 end;
-              v_atl := case when v_atl is null then v_tl else v_atl + (v_tl - v_atl)/7 end;
-              v_acu := case when v_acu is null then v_tl else v_acu + 0.25*(v_tl - v_acu) end;
-              v_chr := case when v_chr is null then v_tl else v_chr + 0.069*(v_tl - v_chr) end;
+              -- 0014 口径：EWMA 从 0 起步，与服务端重算函数逐字对应
+              v_c0 := coalesce(v_ctl, 0); v_a0 := coalesce(v_atl, 0);
+              v_u0 := coalesce(v_acu, 0); v_h0 := coalesce(v_chr, 0);
+              v_ctl := v_c0 + (v_tl - v_c0)/42;
+              v_atl := v_a0 + (v_tl - v_a0)/7;
+              v_acu := v_u0 + 0.25*(v_tl - v_u0);
+              v_chr := v_h0 + 0.069*(v_tl - v_h0);
             else
               v_tl := null;
               v_ctl := case when v_ctl is null then null else v_ctl - v_ctl/42 end;

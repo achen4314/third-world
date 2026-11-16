@@ -96,10 +96,18 @@
       const v = tl[i], ok = v !== null && v !== undefined && Number.isFinite(v);
       const tsb = (pCtl !== null && pAtl !== null) ? pCtl - pAtl : null;
       if (ok) {
-        ctl = ctl === null ? v : ctl + (v - ctl) / 42;
-        atl = atl === null ? v : atl + (v - atl) / 7;
-        acu = acu === null ? v : acu + 0.25 * (v - acu);
-        chr = chr === null ? v : chr + 0.069 * (v - chr);
+        // EWMA 从 0 起步（2026-11-16 用户定口径）：首日 ctl=v/42、atl=v/7，
+        // 不再把状态量直接拉到 v。四个状态量同系数起步，避免 ctl/atl 与 acu/chr
+        // 一边冷启动一边首日直取，导致 ACWR 首日成为构造出来的 1.0000。
+        // 与服务端 0014 迁移逐字对应。
+        const c0 = ctl === null ? 0 : ctl;
+        const a0 = atl === null ? 0 : atl;
+        const u0 = acu === null ? 0 : acu;
+        const h0 = chr === null ? 0 : chr;
+        ctl = c0 + (v - c0) / 42;
+        atl = a0 + (v - a0) / 7;
+        acu = u0 + 0.25 * (v - u0);
+        chr = h0 + 0.069 * (v - h0);
       } else {
         // 休息日：状态量按 0 负荷推进，与服务端 0012 / 0013 同一组系数。
         // 演示/未登录路径此前直接延续前一日，连休后 ATL 不降、TSB 不回升。

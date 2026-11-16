@@ -26,7 +26,14 @@ const script = String.raw`
   add('算法','jump.rsi = h/t_contact', near(h398/0.184,1.0557,0.001), (h398/0.184).toFixed(4));
   const c28=d.computeLoad(Array(28).fill(100));
   add('算法','ACWR rolling 恒定 TL → 1.000', near(c28[27].rolling,1,1e-9), c28[27].rolling);
-  add('算法','ACWR EWMA 恒定 TL → 1.000', near(c28[27].ewma,1,1e-9), c28[27].ewma);
+  // EWMA 从 0 起步（用户定口径）：首日 ctl=TL/42、atl=TL/7，acu/chr 同理；
+  // 恒定 TL 下 acu 收敛快于 chr，ACWR 从冷启动高位单调回落而非构造出来的 1.000。
+  add('算法','EWMA 从 0 起步：首日 CTL=TL/42、ATL=TL/7',
+    near(c28[0].ctl,100/42,1e-9)&&near(c28[0].atl,100/7,1e-9),
+    'ctl='+c28[0].ctl.toFixed(3)+' atl='+c28[0].atl.toFixed(3));
+  add('算法','EWMA 恒定 TL 28 日：ACWR 从冷启动高位回落且 > 1',
+    c28[27].ewma>1&&c28[27].ewma<c28[0].ewma&&c28.every((x,i)=>i===0||x.ewma<=c28[i-1].ewma+1e-9),
+    'd0='+c28[0].ewma.toFixed(3)+' d27='+c28[27].ewma.toFixed(3));
   add('算法','CTL 42 日 EWMA 单调收敛', c28.every((x,i)=>i===0||x.ctl>=c28[i-1].ctl-1e-9), 'ctl28='+c28[27].ctl.toFixed(2));
   const step=d.computeLoad(Array(28).fill(0).map((v,i)=>i<14?0:100));
   add('算法','阶跃输入 ATL 收敛快于 CTL', Math.abs(100-step[27].atl)<Math.abs(100-step[27].ctl), 'ctl='+step[27].ctl.toFixed(2)+' atl='+step[27].atl.toFixed(2));

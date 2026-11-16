@@ -108,6 +108,16 @@ add("发布一致性", "Service Worker 不用 ignoreSearch（?v= 破缓存有效
 add("发布一致性", "HTML 走 network-first（回访拿到新入口页）",
   builder.includes('req.mode === "navigate"'), "network-first", "network-first");
 
+/* 5. 口径一致性：0014 两项用户已定口径，前后端必须同源 */
+const sql14 = fs.readFileSync(path.join(ROOT, "supabase", "migrations",
+  "20261114000014_zero_start_and_r2_gate.sql"), "utf8");
+add("口径一致性", "EWMA 从 0 起步：前端与服务端同步",
+  app.includes("const c0 = ctl === null ? 0 : ctl") && sql14.includes("v_c0 := coalesce(v_ctl, 0)"),
+  "前端 ✓ / 服务端 ✓", "两侧同口径");
+add("口径一致性", "1RM 的 R² ≥ 0.95 门槛：前端与服务端同步",
+  app.includes("LVP.r2 >= 0.95") && sql14.includes("f.r2 < 0.95"),
+  "前端 ✓ / 服务端 ✓", "两侧同门槛");
+
 /* 输出 */
 const pass = rows.filter(r => r.ok).length, fail = rows.length - pass;
 console.log("\n第三世界 · 训练 / 测试模块分离验收");
