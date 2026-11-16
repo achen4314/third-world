@@ -649,23 +649,11 @@
   function page(route, title, question, eyebrow, sections, opts) {
     P[route] = { title, question, eyebrow, sections, chips: (opts && opts.chips) || [], actions: (opts && opts.actions) || [] };
   }
-  // 数据来源标签：连了真库就不能再挂「未连接数据源」，那会让人误判眼前数字的性质
+  // C3：状态只在两处说——顶栏状态点（常驻）与页首横幅（异常时）。
+  // 页内 chip 行只保留口径/窗口类信息，不再重复同步状态。
   function dataChip() {
-    let main;
-    if (state.dbSyncing) {
-      main = '<span class="chip sync">正在同步</span>';
-    } else if (state.dbNeedAuth) {
-      main = '<span class="chip warn" title="' + esc(state.dbReason) + '">登录状态已失效 · 请重新登录</span>';
-    } else if (state.dbError) {
-      main = '<span class="chip err" title="' + esc(state.dbReason) + '">数据未加载</span>';
-    } else if (state.dbStale) {
-      main = '<span class="chip warn" title="' + esc(state.dbReason) + '">' + esc(state.dbLastSync || "上次同步") + ' 的数据 · 可能已过期</span>';
-    } else if (state.dbLive) {
-      main = '<span class="chip live">' + (state.dbTruncated ? '数据已同步 · 部分记录超出窗口' : '已连接 · 数据实时') + '</span>';
-    } else {
-      main = '<span class="chip demo">未连接数据源</span>';
-    }
-    return main;
+    const acwr = state.params.acwr === "rolling" ? "ACWR rolling 7/28" : "ACWR EWMA(7/28)";
+    return '<span class="chip">负荷 sRPE · ' + acwr + '</span>';
   }
 
   /* ── A1 / C1 / C3：顶栏精简后的二级控制与状态 ─────────────
@@ -687,10 +675,15 @@
     return { cls: "demo", on: false, label: "演示数据" };
   }
   function toolChips() {
-    return '<button class="chip" data-act="palette">' + icon("search", 12) + ' 搜索 <span class="kbd">⌘K</span></button>' +
+    let s = '<button class="chip" data-act="palette">' + icon("search", 12) + ' 搜索 <span class="kbd">⌘K</span></button>' +
       '<button class="chip" data-act="workspace">' + icon(state.workspace === "admin" ? "arrow" : "shield", 12) +
       ' ' + (state.workspace === "admin" ? "返回运动员" : "工作台") + '</button>' +
       '<button class="chip" data-act="sheet" data-sheet="tools">' + icon("sliders", 12) + ' 工具与口径</button>';
+    // B2：iPhone 没有常驻 subnav，二级入口改为页首「子页」按钮按需展开。
+    if (state.platform === "iphone") {
+      s += '<button class="chip" data-act="sheet" data-sheet="sections">' + icon("list", 12) + ' 子页</button>';
+    }
+    return s;
   }
   const curWindow = () => (window.ARC_LIVE ? window.ARC_LIVE.state.window : state.params.window);
   const analyzeChips = () => [
@@ -782,9 +775,7 @@
         { icon: "database", title: "设备与缺测", sub: (state.dbLive
             ? (A.DEVICES.length + " 台在用 · " + (A.SRV || []).filter(d => d.tl === null).length + " 天缺测")
             : "5 台在用 · 2 天缺测"), value: "进入", route: "data/quality" }
-      ], 2),
-      S_note("今日页边界", "此页只回答<b>一个问题</b>：今天该练什么。<b>训练</b>负责计划与负荷（TL / ACWR），" +
-        "<b>测试</b>负责 CMJ、VBT 等测量且结果不混入训练负荷；长期趋势进 <b>分析</b>，设备与授权进 <b>数据</b>，团队聚合进 <b>教练工作台</b>。", "info", 1, { label: "查看完整边界表", route: "data/metrics" })
+      ], 2)
     ], { chips: [dataChip(), '<button class="chip" data-act="sheet" data-sheet="rule" data-id="R-12">规则版本 v1.0</button>'] });
   })();
 
@@ -824,9 +815,7 @@
         legend: [{ name: "ACWR (EWMA)", color: "var(--accent)" }],
         note: "急性 / 慢性负荷比；CTL 与 ATL 是其内部状态量，在「分析 · 负荷与周期」查看。" }),
       S_cards("周期块", "由规则引擎生成，可解释、可审批", A.PLAN_BLOCKS.map(b => ({ icon: "chart", title: b.phase + " · " + b.range, sub: "目标周 TL " + b.target + (b.targetDay ? " · 约 " + b.targetDay + "/日" : "") + (b.actual === null || b.actual === undefined ? "" : " · 实际 " + b.actual), value: b.status, badge: b.status, badgeTone: b.tone === "active" ? "info" : b.tone === "done" ? "ok" : b.tone === "warn" ? "bad" : "mute", route: "train/plan" })), 2),
-      S_cards("近期训练", "点按进入单次训练详情", A.SESSIONS.slice(0, 5).map(s => ({ icon: "today", title: s.name, sub: s.date + " · " + s.sport + " · " + s.dur, value: s.tl ? "TL " + s.tl : "休息", route: "train/session", sid: s._id })), 1),
-      S_note("模块边界", "训练模块只计算 <b>TL</b> 与 <b>ACWR</b>，包含计划、日历、单次记录、周期与训练方案库；" +
-        "<b>CMJ / SJ / DJ、VBT、冲刺、筛查等测试项目一律在「测试」模块</b>，不写进训练负荷。", "info", 3)
+      S_cards("近期训练", "点按进入单次训练详情", A.SESSIONS.slice(0, 5).map(s => ({ icon: "today", title: s.name, sub: s.date + " · " + s.sport + " · " + s.dur, value: s.tl ? "TL " + s.tl : "休息", route: "train/session", sid: s._id })), 1)
     ], { chips: [dataChip()], actions: [{ label: "查看训练记录", route: "train/calendar", primary: true }, { label: "训练方案库", route: "train/library" }] });
 
     page("train/calendar", "训练日历", "这一周 / 月计划与完成的差在哪？", "TRAIN / 二级", [
@@ -1034,8 +1023,6 @@
           S_note("教练下发的课", state.dbLive
             ? "库里的 <b>session_templates</b> 还没有模板；这里不会预置示例课。"
             : "连接数据源后，这里会列出教练真实写下的结构化课。", "", 3),
-          S_note("模块边界", "训练方案库<b>只包含训练</b>。CMJ / SJ / DJ、VBT、冲刺与筛查等测试项目在 <b>测试</b>模块，" +
-            "不会写进训练负荷，也不出现在本页。", "", 3)
         ]);
       }
       const rows = [];
@@ -1057,8 +1044,7 @@
           btn: { label: "排到今天", act: "assign", id: t.id }
         }; }), 2),
         S_table("条目明细", "绝对重量与 %1RM 互斥（数据库 CHECK 强制）",
-          ["#", "动作", "组×次", "负荷", "组间", "速度阈值"], rows, 2),
-        S_note("模块边界", "本页<b>只包含训练</b>；排课写到 session_assignments。测试项目在 <b>测试</b>模块，长期趋势在 <b>分析</b>模块。", "", 2)
+          ["#", "动作", "组×次", "负荷", "组间", "速度阈值"], rows, 2)
       ]);
     })(), { chips: [dataChip()] });
 
@@ -1125,8 +1111,7 @@
         { icon: "lab", title: "VBT 分析", sub: "LVP 回归 · R² · 1RM 估计 · 速度损失", route: "analyze/vbt", value: "进入" },
         { icon: "analyze", title: "跳跃表现", sub: "CMJ / SJ / DJ 对比 · RSI · FVP", route: "analyze/jump", value: "进入" },
         { icon: "download", title: "报告与导出", sub: "周期报告 · 口径清单 · CSV / PDF", route: "analyze/report", value: "进入" }
-      ], 3),
-      S_note("分析 ↔ 数据看板边界", "<b>analyze/*</b> 是单运动员、长周期、可下钻到原始样本、可切换口径；<b>admin/overview</b> 是多运动员聚合、只读、最多下钻到成员页。看板不显示样本级数据，也不允许改口径。", "info", 3)
+      ], 3)
     ], { chips: analyzeChips() });
 
     page("analyze/load", "负荷与周期", "长期 / 短期负荷与风险如何演变？", "ANALYZE / 负荷", (function () {
@@ -1560,8 +1545,7 @@
         { label: "当前来源", value: state.demoSource === "import" ? "import" : "manual", delta: "与另一来源互斥筛选", go: "measure/vbt" }
       ]),
       S_protocols("测试协议", "对应 My Jump Lab 能力域，按公开方法独立实现", 2),
-      S_cards("最近测试", "点按进入历史与同条件对比", A.JUMPS.slice(0, 4).map(j => ({ icon: "bolt", title: j.type + " · " + j.date, sub: j.method + " · " + j.cond, value: cm(jumpH(j.tf)) + " cm", route: "measure/history" })), 1),
-      S_note("测试 ↔ 分析边界", "<b>measure/*</b> 采集与写入、实时反馈、设备/录入通道；<b>analyze/*</b> 只读再计算与对比。测试页不显示 90 日趋势，分析页不提供录入控件。", "info", 3)
+      S_cards("最近测试", "点按进入历史与同条件对比", A.JUMPS.slice(0, 4).map(j => ({ icon: "bolt", title: j.type + " · " + j.date, sub: j.method + " · " + j.cond, value: cm(jumpH(j.tf)) + " cm", route: "measure/history" })), 1)
     ], { chips: [dataChip()], actions: [{ label: "IMU 拉取", sheet: "imu" }, { label: "手动录入", sheet: "manual" }] });
 
     page("measure/vbt", "VBT 采集", "这一组每次重复的速度是多少？", "MEASURE / VBT", [
@@ -2534,6 +2518,37 @@
           '<div class="sheet-section-title">原始样本（前几行）</div><div class="table-wrap"><table class="tbl"><thead><tr>' + rawColumns(id).map(c => '<th>' + esc(c) + '</th>').join("") + '</tr></thead><tbody>' + rawSamples(id).map(r => '<tr>' + r.map(c => '<td>' + c + '</td>').join("") + '</tr>').join("") + '</tbody></table></div>',
         footer: foot(closeBtn + '<button class="btn primary" data-act="nav" data-route="data/metrics">查看完整 Registry</button>') };
     }
+    if (t === "sections") {
+      // B2：iPhone 隐藏常驻 subnav 后，二级入口在这里按需展开。
+      const isAdmin = state.workspace === "admin";
+      const g = navGroup();
+      const items = isAdmin
+        ? A.ADMIN_NAV.map(n => ({ id: "admin/" + n.id, label: n.label }))
+        : [{ id: g.id, label: "概览" }].concat(g.children.map(c => ({ id: g.id + "/" + c.id, label: c.label })));
+      return { title: "子页 · " + (isAdmin ? "教练工作台" : g.label), subtitle: "B2 · 小屏二级入口按需展开", small: true,
+        body: '<div class="note info">小屏只保留底部标签栏；要进入当前模块的其它页面，从这里选。</div>' +
+          '<div class="list">' + items.map(it => row({
+            icon: state.route === it.id ? "check" : "chevron", title: it.label, sub: it.id, route: it.id,
+            value: state.route === it.id ? "当前" : undefined, badge: state.route === it.id ? "当前" : undefined, badgeTone: "info"
+          })).join("") + '</div>',
+        footer: foot(closeBtn) };
+    }
+    if (t === "boundary") {
+      // A4：把散落在页尾的「边界说明」收进统一帮助浮层；页面只留任务信息。
+      return { title: "模块边界与说明", subtitle: "A4 · 原页尾说明卡已收起到这里", small: false,
+        body: '<div class="note info">下面是各工作区的职责边界，用于解释「什么数据进哪里、谁负责计算」。它们不是每条决策都需要的提示，因此不再常驻页尾。</div>' +
+          '<div class="sheet-section-title">职责边界</div>' +
+          (A.BOUNDARIES || []).map(b => '<div style="padding:10px 0;border-bottom:1px solid var(--separator)">' +
+            '<div style="font-weight:650;margin-bottom:5px">' + esc(b[0]) + '</div>' +
+            '<div class="mini">' + esc(b[1]) + '</div><div class="mini">' + esc(b[2]) + '</div></div>').join("") +
+          '<div class="sheet-section-title">一句话记忆</div>' +
+          '<div class="list">' +
+          row({ icon: "train", title: "训练", sub: "只算 TL 与 ACWR；1–8 段自由搭配，不混入测试", route: "train" }) +
+          row({ icon: "lab", title: "测量", sub: "CMJ / VBT / 冲刺等采集与原始记录，不写进训练负荷", route: "measure" }) +
+          row({ icon: "analyze", title: "分析", sub: "只读再计算与对比，不提供录入控件", route: "analyze" }) +
+          '</div>',
+        footer: foot(closeBtn) };
+    }
     if (t === "gap") {
       const m = A.METRICS[id] || A.METRICS.ctl;
       const g = GAP_INFO[id] || { why: "该指标当前没有可用输入。缺测日显示「—」，不补 0、不估算、不跨来源合并。",
@@ -2603,7 +2618,10 @@
       let body = '<div class="note info">窗口与口径选择后页面原地刷新；真库模式下数值由服务端按口径重算，本浮层只改展示口径，不补造数据。</div>' +
         '<div class="sheet-section-title">口径与窗口</div>' +
         '<div class="form-row"><label>分析窗口</label><select data-act="param" data-key="window">' + [7, 28, 42, 90].map(v => '<option value="' + v + '" ' + (curWindow() === v ? "selected" : "") + '>' + v + ' 日</option>').join("") + '</select></div>' +
-        '<div class="form-row"><label>ACWR 主口径</label><select data-act="param" data-key="acwr">' + [["ewma", "EWMA（推荐）"], ["rolling", "rolling 7/28"]].map(v => '<option value="' + v[0] + '" ' + (state.params.acwr === v[0] ? "selected" : "") + '>' + v[1] + '</option>').join("") + '</select></div>';
+        '<div class="form-row"><label>ACWR 主口径</label><select data-act="param" data-key="acwr">' + [["ewma", "EWMA（推荐）"], ["rolling", "rolling 7/28"]].map(v => '<option value="' + v[0] + '" ' + (state.params.acwr === v[0] ? "selected" : "") + '>' + v[1] + '</option>').join("") + '</select></div>' +
+        // A4：原页尾的边界说明统一收进这里，页面不再常驻设计文档语言。
+        '<div class="sheet-section-title">说明</div><div class="list">' +
+        row({ icon: "info", title: "模块边界与说明", sub: "训练 / 测量 / 分析各管什么", sheet: "boundary" }) + '</div>';
       if (demoMode()) {
         // B3：演示占位默认关闭；这里给出显式开关，打开后才出现 1 Hz 假流与对标评分。
         body += '<div class="sheet-section-title">演示控制</div>' +

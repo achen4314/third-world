@@ -489,7 +489,8 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 12px; min-width: 
 .platform-iphone .app-main { padding-top: 26px; }
 .platform-iphone .topbar-title { font-size: 14px; }
 .platform-iphone .pill.kbd-hint, .platform-iphone .pill.hide-phone, .platform-iphone .icon-btn.hide-phone { display: none; }
-.platform-iphone .subnav { display: flex; }
+/* B2：小屏不常驻双层导航。底部 tabbar 负责一级，二级改为页面内「子页」入口按需展开。 */
+.platform-iphone .subnav { display: none; }
 .platform-iphone .content { padding: 18px 20px 100px; }
 .platform-iphone .page-title { font-size: 22px; line-height: 28px; }
 .platform-iphone .page-question { font-size: 12.5px; }
